@@ -7,6 +7,9 @@
     .\\.venv\\Scripts\\python.exe -m uvicorn server.main:app --host 127.0.0.1 --port 8000
 
 接口一览：
+- POST   /api/auth/register                   注册（可用 ALLOW_REGISTRATION=false 关闭）
+- POST   /api/auth/login                      登录，返回 JWT
+- GET    /api/auth/me                         当前用户信息
 - POST   /api/chat                            非流式问答
 - POST   /api/chat/stream                     SSE 流式（tool_call/tool_result/delta/done）
 - GET    /api/entities/{entity_key}           实体详情
@@ -17,8 +20,8 @@
 - DELETE /api/sessions/{session_id}           删除会话
 - GET    /api/health                          存活探针（免鉴权）
 
-鉴权：Authorization: Bearer <令牌>，令牌表由 .env 的 API_TOKENS 配置
-（"用户名:令牌" 逗号分隔；未配置时兜底 dev-user:dev-token）。
+鉴权：Authorization: Bearer <JWT>（注册/登录签发，sub=user_id，过期时间见
+JWT_EXPIRE_MINUTES；签名密钥 JWT_SECRET 必须在 .env 显式配置，否则重启即失效）。
 """
 
 import asyncio
@@ -37,8 +40,9 @@ from app.factory import AgentPool
 from app.schemas import ChatRequest, ChatResponse, GraphResult, LLMConfig
 from app.services import SessionOwnershipError
 from app.settings import Settings
-from server.auth import current_user
+from server.auth import create_access_token, current_user
 from server.config import ServerConfig
+from server.user_store import UserStore, UsernameTakenError
 
 logger = logging.getLogger(__name__)
 
@@ -123,6 +127,67 @@ async def _sse_stream(pool: AgentPool, req: ChatRequest) -> AsyncIterator[str]:
 # 路由（图谱 / 会话类接口是同步 def：FastAPI 自动放线程池，不阻塞 SSE 事件循环）
 # --------------------------------------------------------------------------- #
 router = APIRouter(prefix="/api", tags=["medical-kg-agent"])
+
+
+# --------------------------------------------------------------------------- #
+# 账号体系：注册 / 登录 / 当前用户（JWT 签发）
+# --------------------------------------------------------------------------- #
+class AuthBody(BaseModel):
+    username: str = Field(pattern=r"^[A-Za-z0-9_-]{3,32}$")
+    password: str = Field(min_length=8, max_length=128)
+
+
+class TokenResponse(BaseModel):
+    access_token: str
+    token_type: str = "bearer"
+    expires_in: int  # 秒
+    user_id: str
+    username: str
+
+
+def _user_store(request: Request) -> UserStore:
+    return request.app.state.user_store
+
+
+def _issue_token(request: Request, user: Dict[str, str]) -> TokenResponse:
+    cfg: ServerConfig = request.app.state.server_config
+    return TokenResponse(
+        access_token=create_access_token(cfg, user["user_id"]),
+        expires_in=cfg.jwt_expire_minutes * 60,
+        user_id=user["user_id"],
+        username=user["username"],
+    )
+
+
+@router.post("/auth/register", response_model=TokenResponse, status_code=201)
+def register(body: AuthBody, request: Request) -> TokenResponse:
+    """注册并直接返回 JWT（免二次登录）。可用 ALLOW_REGISTRATION=false 关闭。"""
+    cfg: ServerConfig = request.app.state.server_config
+    if not cfg.allow_registration:
+        raise HTTPException(status_code=403, detail="注册已关闭，请联系管理员开通账号")
+    try:
+        user = _user_store(request).create_user(body.username, body.password)
+    except UsernameTakenError:
+        raise HTTPException(status_code=409, detail="用户名已被注册")
+    return _issue_token(request, user)
+
+
+@router.post("/auth/login", response_model=TokenResponse)
+def login(body: AuthBody, request: Request) -> TokenResponse:
+    """口令校验成功返回 JWT；失败一律 401（不区分用户不存在/密码错误，防枚举）。"""
+    user = _user_store(request).authenticate(body.username, body.password)
+    if user is None:
+        raise HTTPException(status_code=401, detail="用户名或密码错误")
+    return _issue_token(request, user)
+
+
+@router.get("/auth/me")
+def auth_me(user: CurrentUser, request: Request) -> Dict[str, str]:
+    """当前登录用户信息（校验令牌有效性的轻量探针）。"""
+    info = _user_store(request).get(user)
+    if info is None:  # 用户被删但令牌未过期
+        raise HTTPException(status_code=401, detail="账号不存在或已注销")
+    return info
 
 
 @router.post("/chat", response_model=ChatResponse)
@@ -248,7 +313,7 @@ def create_app(
     settings: Optional[Settings] = None, config: Optional[ServerConfig] = None
 ) -> FastAPI:
     """装配应用。Settings.load() 必须先于 ServerConfig.from_env()：
-    前者把 .env 写入 os.environ，后者才能读到 SERVER_* / API_TOKENS 等值。"""
+    前者把 .env 写入 os.environ，后者才能读到 SERVER_* / JWT_* 等值。"""
     settings = settings or Settings.load()
     config = config or ServerConfig.from_env()
 
@@ -256,12 +321,20 @@ def create_app(
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         app.state.pool = AgentPool(settings)
         app.state.server_config = config
+        app.state.user_store = UserStore(config.user_db_path)
         logger.info(
-            "后端就绪：%s:%s，鉴权用户 %d 个", config.host, config.port, len(config.tokens)
+            "后端就绪：%s:%s（用户库 %s，注册%s，令牌有效期 %d 分钟%s）",
+            config.host,
+            config.port,
+            config.user_db_path,
+            "开放" if config.allow_registration else "关闭",
+            config.jwt_expire_minutes,
+            "，JWT_SECRET 为临时随机值" if config.jwt_secret_ephemeral else "",
         )
         yield
         # 先等后台记忆沉淀写完，再释放连接池与 SDK 资源（否则最后几条记忆可能丢失）
         await app.state.pool.close()
+        app.state.user_store.close()
 
     app = FastAPI(title="医疗知识图谱 Agent 后端", version="0.1.0", lifespan=lifespan)
     app.add_middleware(

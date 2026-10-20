@@ -23,6 +23,8 @@ dependencies = [
     # 后端路由层（server/）：HTTP ⇄ AgentPool 薄转发 + SSE
     "fastapi>=0.110",
     "uvicorn>=0.29",
+    # 用户体系：JWT 签发/校验（口令哈希用 stdlib PBKDF2，零依赖）
+    "PyJWT>=2.8",
 ]
 
 [build-system]

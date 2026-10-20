@@ -60,8 +60,9 @@ app/
 
 server/                          FastAPI 后端路由层（HTTP ⇄ AgentPool 薄转发）
 ├── main.py                     全部路由 + SSE 映射 + 应用装配
-├── auth.py                     简单 Token 鉴权（Bearer → user_id）
-└── config.py                   服务监听 / CORS / 令牌表（SERVER_* 环境变量）
+├── auth.py                     JWT 签发/校验（HS256，sub=user_id）
+├── user_store.py               用户表（data/server.db）+ PBKDF2 口令哈希
+└── config.py                   服务监听 / CORS / JWT（SERVER_*、JWT_* 环境变量）
 
 examples/                       01_chat / 02_memory / 03_translation
 scripts/import_sample.py        导入小样例图谱到 Neo4j
@@ -106,15 +107,18 @@ data/primekg/                   PrimeKG-Plus 数据包（dataset/ + Zenodo 压�
 .\.venv\Scripts\python.exe -m uvicorn server.main:app --host 127.0.0.1 --port 8000
 ```
 
-- **鉴权**：`Authorization: Bearer <令牌>`。令牌表由 `.env` 的 `API_TOKENS` 配置
-  （`用户名:令牌` 逗号分隔，如 `API_TOKENS=alice:token-a,bob:token-b`）；
-  未配置时兜底 `dev-user:dev-token`（仅限本地联调）。
-- **接口**：`POST /api/chat`、`POST /api/chat/stream`（SSE，事件 `tool_call` / `tool_result` /
+- **鉴权**：用户表 + JWT。`POST /api/auth/register` 注册（可用 `ALLOW_REGISTRATION=false` 关闭）、
+  `POST /api/auth/login` 登录，返回 `access_token`；业务接口带 `Authorization: Bearer <JWT>`。
+  口令以 PBKDF2-HMAC-SHA256（60 万次迭代）哈希后存 `data/server.db`（`USER_DB_PATH` 可改）；
+  签名密钥 `JWT_SECRET` **生产必须显式配置**（留空则每次启动随机生成，重启后令牌全部失效），
+  有效期 `JWT_EXPIRE_MINUTES`（默认 720 分钟）。
+- **接口**：`POST /api/auth/register`、`POST /api/auth/login`、`GET /api/auth/me`、
+  `POST /api/chat`、`POST /api/chat/stream`（SSE，事件 `tool_call` / `tool_result` /
   `delta` / `done` / `error`，静默期每 20s 发 `: ping` 注释行）、`GET /api/entities/{key}`、
   `GET /api/entities/{key}/subgraph?depth=1&limit=50`、`DELETE /api/users/me/memory`、
   `GET /api/sessions`、`GET /api/sessions/{id}/messages`、`DELETE /api/sessions/{id}`、
   `GET /api/health`。完整契约（错误码 / SSE 字段 / 联调检查单）见 [接口文档.md](接口文档.md)。
-- 服务端环境变量（`SERVER_HOST` / `SERVER_PORT` / `API_TOKENS` / `CORS_ORIGINS`）也写在 `.env` 里，
+- 服务端环境变量（`SERVER_HOST` / `SERVER_PORT` / `JWT_SECRET` / `CORS_ORIGINS` 等）也写在 `.env` 里，
   模板见 [.env.example](.env.example)。
 
 ## 安装
