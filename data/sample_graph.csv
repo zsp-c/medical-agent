@@ -1,0 +1,24 @@
+src_key,src_name_original,src_name_zh,src_type,src_desc,relation_code,relation_display,dst_key,dst_name_original,dst_name_zh,dst_type,dst_desc,source_dataset
+disease:hypertension,Hypertension,高血压,disease,"以体循环动脉血压持续升高为主要表现的慢性疾病",associated_with,associated with,symptom:headache,Headache,头痛,symptom,"头部疼痛的主观不适",SampleKG
+disease:hypertension,Hypertension,高血压,disease,"以体循环动脉血压持续升高为主要表现的慢性疾病",associated_with,associated with,symptom:dizziness,Dizziness,眩晕,symptom,"自身或环境的旋转感与平衡障碍",SampleKG
+disease:hypertension,Hypertension,高血压,disease,"以体循环动脉血压持续升高为主要表现的慢性疾病",increases_risk_of,increases risk of,disease:stroke,Stroke,脑卒中,disease,"脑血管突然破裂或阻塞引起的急性脑功能障碍",SampleKG
+disease:hypertension,Hypertension,高血压,disease,"以体循环动脉血压持续升高为主要表现的慢性疾病",increases_risk_of,increases risk of,disease:myocardial_infarction,Myocardial infarction,心肌梗死,disease,"冠状动脉急性闭塞导致心肌缺血坏死",SampleKG
+disease:hypertension,Hypertension,高血压,disease,"以体循环动脉血压持续升高为主要表现的慢性疾病",treated_by,treated by,drug:amlodipine,Amlodipine,氨氯地平,drug,"二氢吡啶类钙通道阻滞剂",SampleKG
+disease:hypertension,Hypertension,高血压,disease,"以体循环动脉血压持续升高为主要表现的慢性疾病",treated_by,treated by,drug:losartan,Losartan,氯沙坦,drug,"血管紧张素II受体拮抗剂",SampleKG
+disease:hypertension,Hypertension,高血压,disease,"以体循环动脉血压持续升高为主要表现的慢性疾病",has_phenotype,has phenotype,phenotype:blood_pressure,Blood pressure,血压,phenotype,"血液对血管壁的侧压力",SampleKG
+phenotype:insulin_resistance,Insulin resistance,胰岛素抵抗,phenotype,"靶组织对胰岛素敏感性下降",causes,causes,disease:type2_diabetes,Type 2 diabetes mellitus,2型糖尿病,disease,"以胰岛素抵抗和相对胰岛素分泌不足为特征的代谢性疾病",SampleKG
+disease:type2_diabetes,Type 2 diabetes mellitus,2型糖尿病,disease,"以胰岛素抵抗和相对胰岛素分泌不足为特征的代谢性疾病",has_phenotype,has phenotype,phenotype:insulin_resistance,Insulin resistance,胰岛素抵抗,phenotype,"靶组织对胰岛素敏感性下降",SampleKG
+disease:type2_diabetes,Type 2 diabetes mellitus,2型糖尿病,disease,"以胰岛素抵抗和相对胰岛素分泌不足为特征的代谢性疾病",treated_by,treated by,drug:metformin,Metformin,二甲双胍,drug,"双胍类口服降糖药",SampleKG
+disease:type2_diabetes,Type 2 diabetes mellitus,2型糖尿病,disease,"以胰岛素抵抗和相对胰岛素分泌不足为特征的代谢性疾病",increases_risk_of,increases risk of,disease:retinopathy,Diabetic retinopathy,糖尿病视网膜病变,disease,"糖尿病引起的视网膜微血管损伤",SampleKG
+disease:obesity,Obesity,肥胖,disease,"体脂过度蓄积并影响健康的慢性状态",increases_risk_of,increases risk of,disease:type2_diabetes,Type 2 diabetes mellitus,2型糖尿病,disease,"以胰岛素抵抗和相对胰岛素分泌不足为特征的代谢性疾病",SampleKG
+disease:obesity,Obesity,肥胖,disease,"体脂过度蓄积并影响健康的慢性状态",increases_risk_of,increases risk of,disease:hyperlipidemia,Hyperlipidemia,高脂血症,disease,"血浆脂质水平异常升高",SampleKG
+disease:hyperlipidemia,Hyperlipidemia,高脂血症,disease,"血浆脂质水平异常升高",increases_risk_of,increases risk of,disease:myocardial_infarction,Myocardial infarction,心肌梗死,disease,"冠状动脉急性闭塞导致心肌缺血坏死",SampleKG
+drug:amlodipine,Amlodipine,氨氯地平,drug,"二氢吡啶类钙通道阻滞剂",belongs_to,belongs to,drugclass:antihypertensive,Antihypertensive drug,降压药,drug_class,"用于降低血压的药物类别",SampleKG
+drug:losartan,Losartan,氯沙坦,drug,"血管紧张素II受体拮抗剂",belongs_to,belongs to,drugclass:antihypertensive,Antihypertensive drug,降压药,drug_class,"用于降低血压的药物类别",SampleKG
+gene:ace,ACE,血管紧张素转换酶基因,gene,"编码血管紧张素转换酶的基因",encodes,encodes,protein:ace,ACE protein,血管紧张素转换酶,protein,"催化血管紧张素I转化为血管紧张素II",SampleKG
+gene:agt,AGT,血管紧张素原基因,gene,"编码血管紧张素原的基因",encodes,encodes,protein:angiotensinogen,Angiotensinogen,血管紧张素原,protein,"肾素的作用底物",SampleKG
+anatomy:kidney,Kidney,肾脏,anatomy,"泌尿与血压调节器官",produces,produces,protein:renin,Renin,肾素,protein,"由肾脏球旁细胞分泌的蛋白酶",SampleKG
+protein:renin,Renin,肾素,protein,"由肾脏球旁细胞分泌的蛋白酶",cleaves,cleaves,protein:angiotensinogen,Angiotensinogen,血管紧张素原,protein,"肾素的作用底物",SampleKG
+protein:ace,ACE protein,血管紧张素转换酶,protein,"催化血管紧张素I转化为血管紧张素II",produces,produces,protein:angiotensin_ii,Angiotensin II,血管紧张素II,protein,"强效升压肽",SampleKG
+protein:angiotensin_ii,Angiotensin II,血管紧张素II,protein,"强效升压肽",increases,increases,phenotype:blood_pressure,Blood pressure,血压,phenotype,"血液对血管壁的侧压力",SampleKG
+drug:losartan,Losartan,氯沙坦,drug,"血管紧张素II受体拮抗剂",targets,targets,protein:angiotensin_ii,Angiotensin II,血管紧张素II,protein,"强效升压肽",SampleKG

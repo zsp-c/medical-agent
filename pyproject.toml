@@ -1,0 +1,30 @@
+[project]
+name = "openjiuwen-agent"
+version = "0.1.0"
+description = "中文医疗知识图谱 Agent（Agent 层，基于 openjiuwen SDK）"
+requires-python = ">=3.11,<3.14"
+dependencies = [
+    # 唯一底座：ReAct 循环、工具调度、会话上下文、长期记忆引擎都由它提供
+    "openjiuwen>=0.1.19,<0.2",
+    # 必须锁在 3.x：filelock 4.x 改了 AsyncReadWriteLock 的 task-owner 追踪语义，
+    # 会让 openjiuwen 本地 fs 读取报 "Cannot release a lock ... not held by this task"，
+    # 进而使 skill 注册（内部要读 SKILL.md）失败。
+    "filelock>=3.25.0,<4",
+    # 会话/翻译缓存存储：SQLite 默认实现，换 PG 只需改连接串
+    "sqlalchemy>=2.0",
+    # 后端对接契约（schemas.py）
+    "pydantic>=2.0",
+    # 图谱查询：Neo4j 官方驱动
+    "neo4j>=5.0",
+    # 长期记忆引擎的持久化后端：SQLite（SDK 无 PostgreSQL 适配器，见构建细节 §8）
+    "aiosqlite>=0.19",
+    # 长期记忆的语义检索向量库（本地持久化，无需 etcd/minio）
+    "chromadb>=1.0",
+]
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["app*"]
