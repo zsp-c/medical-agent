@@ -1,5 +1,6 @@
 """业务编排层：后端只依赖这一层与 app.schemas。"""
 
+from app.repositories.conversation_store import SessionOwnershipError
 from app.services.agent_service import AgentService
 from app.services.context_service import ContextService
 from app.services.graph_query_service import GraphQueryService, build_graph_repository
@@ -14,4 +15,5 @@ __all__ = [
     "MemoryService",
     "MemoryEngine",
     "TranslationService",
+    "SessionOwnershipError",
 ]

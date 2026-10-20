@@ -208,6 +208,7 @@ class AgentPool:
         self._store: Optional[ConversationStore] = None
         self._graph_repo: Optional[GraphRepository] = None
         self._translation_cache: Optional[TranslationCache] = None
+        self._graph_service: Optional[GraphQueryService] = None
 
     # ---- 缓存键：只留哈希，不留 key 本体 ----
     @staticmethod
@@ -275,6 +276,44 @@ class AgentPool:
         built = await self._get(req.llm)
         async for event in built.service.handle_chat_stream(req):
             yield event
+
+    # ---- 后端路由层（server/）的共享设施访问器 --------------------------------
+
+    def graph_service(self) -> GraphQueryService:
+        """共享图谱查询服务：实体详情 / 子图等 HTTP 接口复用池内 Neo4j 连接。
+
+        与各 Agent 自带的 GraphQueryService 实例互不影响（各自维护证据收集器）；
+        不拥有 repo（共享 `_graph_repo`，由 `close()` 统一释放）。
+        """
+        self._ensure_shared()
+        if self._graph_service is None:
+            self._graph_service = GraphQueryService(self._base, repo=self._graph_repo)
+        return self._graph_service
+
+    def conversation_store(self) -> ConversationStore:
+        """共享会话存储：会话列表 / 历史消息 / 删除会话等 HTTP 接口用。"""
+        self._ensure_shared()
+        assert self._store is not None
+        return self._store
+
+    async def forget_memory(self, user_id: str) -> bool:
+        """按 user_id 清空长期记忆（SQLite + Chroma 两处一起删）。
+
+        记忆存储是全局共享的（各 BYOK 配置的引擎指向同一 SQLite/Chroma），
+        因此任一引擎删除即对全部配置生效；池内没有引擎时临时装配一个执行删除。
+        """
+        for built in list(self._agents.values()):
+            try:
+                if await built.memory.forget(user_id):
+                    return True
+            except Exception:
+                logger.warning("池内 Agent 清理记忆失败，继续尝试", exc_info=True)
+        engine = await build_memory_engine(self._base)
+        service = MemoryService(self._base.memory_scope_id, engine=engine)
+        try:
+            return await service.forget(user_id)
+        finally:
+            await service.close()
 
     async def close(self) -> None:
         """进程退出时调用：等所有后台沉淀、释放共享设施与 SDK 全局资源。"""
