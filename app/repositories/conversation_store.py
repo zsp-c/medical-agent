@@ -11,7 +11,7 @@
 
 from abc import ABC, abstractmethod
 from pathlib import Path
-from typing import List, Optional
+from typing import Dict, List, Optional
 
 from sqlalchemy import (
     Column,
@@ -20,6 +20,7 @@ from sqlalchemy import (
     String,
     Table,
     create_engine,
+    delete,
     func,
     insert,
     select,
@@ -78,6 +79,25 @@ class ConversationStore(ABC):
     @abstractmethod
     def exists_request(self, request_id: str) -> bool:
         """该 request_id 是否已处理过。"""
+
+    # ---- 会话列表 / 归属查询 / 删除（后端路由层用，只操作归档数据，不参与对话链路）----
+    # 这组不是抽象方法：换 PG 只需在具体实现里覆盖，不影响已有实现类。
+
+    def get_session_owner(self, session_id: str) -> Optional[str]:
+        """只读查询会话归属；不存在返回 None（不像 ensure_session 会登记新会话）。"""
+        raise NotImplementedError
+
+    def list_sessions(self, user_id: str, limit: int = 50, offset: int = 0) -> List[Dict[str, str]]:
+        """该用户的会话列表，按 updated_at 倒序分页。"""
+        raise NotImplementedError
+
+    def count_sessions(self, user_id: str) -> int:
+        """该用户的会话总数。"""
+        raise NotImplementedError
+
+    def delete_session(self, session_id: str) -> int:
+        """删除会话及其全部消息；返回删除的消息条数。"""
+        raise NotImplementedError
 
     def close(self) -> None:  # pragma: no cover - 可选实现
         return None
@@ -187,6 +207,46 @@ class SqliteConversationStore(ConversationStore):
                 .select_from(messages)
                 .where(messages.c.session_id == session_id)
             ).scalar_one()
+
+    def get_session_owner(self, session_id: str) -> Optional[str]:
+        with self._engine.connect() as conn:
+            row = conn.execute(
+                select(sessions.c.user_id).where(sessions.c.session_id == session_id)
+            ).first()
+        return None if row is None else row.user_id
+
+    def list_sessions(self, user_id: str, limit: int = 50, offset: int = 0) -> List[Dict[str, str]]:
+        with self._engine.connect() as conn:
+            rows = conn.execute(
+                select(sessions)
+                .where(sessions.c.user_id == user_id)
+                .order_by(sessions.c.updated_at.desc(), sessions.c.session_id)
+                .limit(limit)
+                .offset(offset)
+            ).all()
+        return [
+            {
+                "session_id": r.session_id,
+                "created_at": r.created_at,
+                "updated_at": r.updated_at,
+            }
+            for r in rows
+        ]
+
+    def count_sessions(self, user_id: str) -> int:
+        with self._engine.connect() as conn:
+            return conn.execute(
+                select(func.count()).select_from(sessions).where(sessions.c.user_id == user_id)
+            ).scalar_one()
+
+    def delete_session(self, session_id: str) -> int:
+        # 先删消息再删会话行；单事务保证两者一致
+        with self._engine.begin() as conn:
+            removed = conn.execute(
+                messages.delete().where(messages.c.session_id == session_id)
+            ).rowcount
+            conn.execute(sessions.delete().where(sessions.c.session_id == session_id))
+        return removed or 0
 
     def close(self) -> None:
         self._engine.dispose()

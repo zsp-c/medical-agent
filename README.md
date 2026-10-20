@@ -1,8 +1,9 @@
 # openjiuwen-agent · 中文医疗知识图谱 Agent（Agent 层）
 
 基于官方 [openjiuwen](https://pypi.org/project/openjiuwen/) SDK 的**中文医疗知识图谱问答 Agent**。
-Agent 层单独交付：前端（React + Cytoscape.js）与后端路由层（FastAPI）不在本仓库实现，
-但所有对外契约（`app.schemas` + `app.services`）按"后端可直接调用"的方式预留。
+交付 Agent 层（`app/`）+ FastAPI 后端路由层（`server/`，见"启动后端"节）；
+前端（React + Cytoscape.js）不在本仓库，所有对外契约（`app.schemas` + `app.services`）
+按"前端可直接对接"的方式预留。
 
 > 完整构建决策、差异说明、风险与实测记录见 [项目构建细节.md](项目构建细节.md)（唯一的构建基线）。
 
@@ -21,7 +22,7 @@ Agent 层单独交付：前端（React + Cytoscape.js）与后端路由层（Fas
 ## 架构
 
 ```
-        后端 FastAPI（不在本仓库）             本仓库（Agent 层）                    openjiuwen SDK
+        后端 FastAPI（server/）               本仓库（Agent 层）                    openjiuwen SDK
 ┌───────────────────────────────┐   ┌──────────────────────────────┐   ┌────────────────────────┐
 │ 鉴权 → 取 user_id             │   │ schemas.py   接口契约        │──▶│ ReActAgent + ReActAgentConfig │
 │ POST /api/chat（/stream SSE） │──▶│ AgentService.handle_chat[_stream]() │──▶│ Runner.run_agent[_streaming] / 上下文引擎 │
@@ -57,6 +58,11 @@ app/
 │   └── translation_tools.py    1 个翻译工具（模型可见）
 └── memory/setup.py             内置长期记忆引擎装配
 
+server/                          FastAPI 后端路由层（HTTP ⇄ AgentPool 薄转发）
+├── main.py                     全部路由 + SSE 映射 + 应用装配
+├── auth.py                     简单 Token 鉴权（Bearer → user_id）
+└── config.py                   服务监听 / CORS / 令牌表（SERVER_* 环境变量）
+
 examples/                       01_chat / 02_memory / 03_translation
 scripts/import_sample.py        导入小样例图谱到 Neo4j
 scripts/import_primekg.py       导入 PrimeKG-Plus 全量到 Neo4j
@@ -89,6 +95,27 @@ data/primekg/                   PrimeKG-Plus 数据包（dataset/ + Zenodo 压�
 - **`request_id` 有幂等缓存**：重复跑同一示例会命中旧答案、不产生新 LLM 调用；想验证改动效果就换新的 `request_id` / `session_id`
 - 第 4 步即已覆盖全链路（归属校验 → 上下文 → 记忆检索 → ReAct + 图谱工具 → 写回 → 后台沉淀）；5、6 是增强能力的单独验证
 - 流式链路回归：`.\.venv\Scripts\python.exe scripts\stream_e2e.py`（事件序列 + delta 拼接一致性断言）
+
+## 启动后端
+
+前置：装好依赖（`pip install -e .`，已含 fastapi/uvicorn）、配好 `.env`（同"快速跑通"第 2 步）。
+
+```powershell
+.\.venv\Scripts\python.exe -m server.main          # 默认 127.0.0.1:8000
+# 或
+.\.venv\Scripts\python.exe -m uvicorn server.main:app --host 127.0.0.1 --port 8000
+```
+
+- **鉴权**：`Authorization: Bearer <令牌>`。令牌表由 `.env` 的 `API_TOKENS` 配置
+  （`用户名:令牌` 逗号分隔，如 `API_TOKENS=alice:token-a,bob:token-b`）；
+  未配置时兜底 `dev-user:dev-token`（仅限本地联调）。
+- **接口**：`POST /api/chat`、`POST /api/chat/stream`（SSE，事件 `tool_call` / `tool_result` /
+  `delta` / `done` / `error`，静默期每 20s 发 `: ping` 注释行）、`GET /api/entities/{key}`、
+  `GET /api/entities/{key}/subgraph?depth=1&limit=50`、`DELETE /api/users/me/memory`、
+  `GET /api/sessions`、`GET /api/sessions/{id}/messages`、`DELETE /api/sessions/{id}`、
+  `GET /api/health`。完整契约（错误码 / SSE 字段 / 联调检查单）见 [接口文档.md](接口文档.md)。
+- 服务端环境变量（`SERVER_HOST` / `SERVER_PORT` / `API_TOKENS` / `CORS_ORIGINS`）也写在 `.env` 里，
+  模板见 [.env.example](.env.example)。
 
 ## 安装
 

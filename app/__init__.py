@@ -18,6 +18,7 @@ from app.schemas import (
     Message,
     RelationEdge,
 )
+from app.services import SessionOwnershipError
 from app.services.agent_service import AgentService
 from app.settings import Settings
 
@@ -28,6 +29,7 @@ __all__ = [
     "AgentPool",
     "BuiltAgent",
     "AgentService",
+    "SessionOwnershipError",
     "ChatRequest",
     "ChatResponse",
     "EntityBrief",
