@@ -77,7 +77,7 @@ data/primekg/                   PrimeKG-Plus 数据包（dataset/ + Zenodo 压�
 | # | 步骤 | 命令 / 操作 | 通过标志 |
 | --- | --- | --- | --- |
 | 1 | 建环境装依赖 | `python -m venv .venv` → `.\.venv\Scripts\python.exe -m pip install -e .` | `python -c "import app"` 不报错 |
-| 2 | 配 `.env` | `copy .env.example .env`，**必填** `OPENAI_API_KEY` 与 `EMBEDDING_API_KEY` 两项 | — |
+| 2 | 配 `.env` | `copy .env.example .env`，**必填** `OPENAI_API_KEY`；embedding 二选一：本地 TEI（见"起本地 embedding"节，`EMBEDDING_API_KEY=local` 任意非空）或云端百炼（填真实 key） | — |
 | 3 | 图谱（二选一） | ① 无 Docker：什么都不做，`GRAPH_BACKEND=auto` 自动降级读 `data/sample_graph.csv`<br>② 有 Docker：起容器（见"起图谱"节）→ `.\.venv\Scripts\python.exe scripts\import_sample.py` 导样例（22 实体 / 23 关系） | ① 零配置；② 脚本打印导入完成 |
 | 4 | 跑对话 | `.\.venv\Scripts\python.exe examples\01_chat.py` | 回答引用图谱证据，`evidence_entities` 非空；降级时 `meta.graph_backend="sample"` |
 | 5 | 跑记忆 | `.\.venv\Scripts\python.exe examples\02_memory.py` | 换全新 `session_id` 仍召回上一会话信息（`memory_used > 0`） |
@@ -108,12 +108,36 @@ copy .env.example .env
 - **对话模型**：provider 固定 `openai`，默认 DeepSeek `deepseek-chat`；换厂商只改 `.env` 的
   `OPENAI_API_KEY` / `OPENAI_BASE_URL` / `OPENAI_MODEL` 三项（任何 OpenAI 兼容接口均可，
   如百炼 `qwen-plus`、智谱 `glm-4-plus`）
-- **向量化**：必须独立配置 `EMBEDDING_*`。DeepSeek **不提供 embedding 接口**，
-  默认用百炼 DashScope；注意 `EMBEDDING_BASE_URL` 要填**完整 endpoint**
-  （openjiuwen 会直接 POST 该地址，不再补 `/embeddings`）
+- **向量化**：必须独立配置 `EMBEDDING_*`（DeepSeek **不提供 embedding 接口**）。两种方式二选一：
+  - **本地（推荐）**：Docker 起 TEI 容器（`oj-embed`，`BAAI/bge-m3`，见下方"起本地 embedding"节），
+    离线可用、零配额，BYOK 用户不再共享服务端 embedding
+  - **云端**：百炼 DashScope `text-embedding-v3`
+  注意 `EMBEDDING_BASE_URL` 要填**完整 endpoint**（openjiuwen 会直接 POST 该地址，不再补
+  `/embeddings`）；**切换提供方后必须清空 `data/chroma` 与 SQLite 旧记忆**（向量空间不兼容）
 - **节流**：`LLM_RPM_LIMIT` 滑动窗口限流（默认 100/分钟），Agent 推理 / 记忆抽取 / 翻译
   共用同一闸门；额度内立即放行、不加任何延迟，仅窗口内请求数达上限时才等待；设为 0 即完全关闭节流
 - 所有环境变量含义见 `.env.example` 注释
+
+## 起本地 embedding（可选，替代云端百炼）
+
+用 Docker 单容器跑 text-embeddings-inference（TEI）CPU 版，模型 `BAAI/bge-m3`
+（中文友好，1024 维，约 2.3GB，CPU 可跑）：
+
+```powershell
+# 1) 先下载模型到本地（TEI 自带下载器与镜像站不兼容，必须用 huggingface_hub 预下载）
+$env:HF_ENDPOINT='https://hf-mirror.com'
+.\.venv\Scripts\python.exe -c "from huggingface_hub import snapshot_download; snapshot_download('BAAI/bge-m3', local_dir=r'data\models\bge-m3')"
+
+# 2) 挂载模型目录起容器（max-batch-tokens 4096 是为压低 warmup 内存峰值，须配合 auto-truncate）
+docker run -d --name oj-embed -p 8080:80 -v <项目路径>/data/models:/data `
+  ghcr.io/huggingface/text-embeddings-inference:cpu-1.8.3 --model-id /data/bge-m3 `
+  --max-batch-tokens 4096 --max-concurrent-requests 32 --auto-truncate
+```
+
+`.env` 对应三项：`EMBEDDING_MODEL=bge-m3`、`EMBEDDING_BASE_URL=http://localhost:8080/v1/embeddings`、
+`EMBEDDING_API_KEY=local`（任意非空值）。记忆检索/沉淀的 embedding 调用随即全部走本地，
+离线可用、零配额。SDK 的 scope 检索路径硬编码 OpenAI 兼容 `APIEmbedding`，因此本地必须走
+HTTP 端点（进程内嵌入插不进去），TEI 是最省心的选择。
 
 ## 起图谱（可选，不起也能跑）
 
