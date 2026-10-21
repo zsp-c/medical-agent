@@ -1,9 +1,8 @@
 # openjiuwen-agent · 中文医疗知识图谱 Agent（Agent 层）
 
 基于官方 [openjiuwen](https://pypi.org/project/openjiuwen/) SDK 的**中文医疗知识图谱问答 Agent**。
-交付 Agent 层（`app/`）+ FastAPI 后端路由层（`server/`，见"启动后端"节）；
-前端（React + Cytoscape.js）不在本仓库，所有对外契约（`app.schemas` + `app.services`）
-按"前端可直接对接"的方式预留。
+三层全交付：Agent 层（`app/`）+ FastAPI 后端（`server/`，见"启动后端"节）+
+React 前端（`frontend/`，见"启动前端"节）。
 
 > 完整构建决策、差异说明、风险与实测记录见 [项目构建细节.md](项目构建细节.md)（唯一的构建基线）。
 
@@ -64,6 +63,14 @@ server/                          FastAPI 后端路由层（HTTP ⇄ AgentPool �
 ├── user_store.py               用户表（data/server.db）+ PBKDF2 口令哈希
 └── config.py                   服务监听 / CORS / JWT（SERVER_*、JWT_* 环境变量）
 
+frontend/                        React 前端（Vite 构建）
+├── src/api.js                  JWT 请求封装 + SSE POST 流式解析（BYOK 只存 localStorage）
+├── src/App.jsx                 登录态管理（令牌失效自动回登录页）
+├── src/Login.jsx               登录/注册
+├── src/ChatPanel.jsx           三栏主界面：会话列表 + 消息流（流式/工具状态/证据胶囊）
+├── src/GraphView.jsx           Cytoscape 关系子图 + 实体详情卡
+└── src/SettingsModal.jsx       BYOK 模型设置（浏览器侧保存）
+
 examples/                       01_chat / 02_memory / 03_translation
 scripts/import_sample.py        导入小样例图谱到 Neo4j
 scripts/import_primekg.py       导入 PrimeKG-Plus 全量到 Neo4j
@@ -120,6 +127,22 @@ data/primekg/                   PrimeKG-Plus 数据包（dataset/ + Zenodo 压�
   `GET /api/health`。完整契约（错误码 / SSE 字段 / 联调检查单）见 [接口文档.md](接口文档.md)。
 - 服务端环境变量（`SERVER_HOST` / `SERVER_PORT` / `JWT_SECRET` / `CORS_ORIGINS` 等）也写在 `.env` 里，
   模板见 [.env.example](.env.example)。
+
+## 启动前端
+
+前置：Node.js ≥ 18；后端已启动（默认 127.0.0.1:8000）。
+
+```powershell
+cd frontend
+npm install
+npm run dev        # http://localhost:5173（/api 已代理到本地后端）
+npm run build      # 生产构建到 frontend/dist（由同源反代或静态服务承载）
+```
+
+- 页面功能：注册/登录（JWT 存 localStorage）、会话列表（新建/切换/删除）、SSE 流式问答
+  （工具调用状态行 + 逐字生成）、证据实体胶囊（点击右侧出详情卡 + Cytoscape 一跳子图）、
+  BYOK 模型设置（仅存浏览器）、清空长期记忆、退出登录。
+- 已实测：注册登录 → 流式问答（约 30s）→ 证据胶囊 → 子图渲染 → 退出重登会话仍在，控制台无报错。
 
 ## 安装
 
