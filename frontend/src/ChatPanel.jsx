@@ -12,15 +12,23 @@ const TOOL_LABELS = {
   present_quiz: '出题',
 };
 
-// 互动题卡：模型 present_quiz 推送的题目，用户单选后回发作答消息由模型判题
+// 互动题卡：模型 present_quiz 推送的题目。有选项即单选，无选项即问答；
+// 用户作答后回发一条消息，由模型判题
 function QuizCard({ quiz, disabled, onSubmit }) {
   const [selected, setSelected] = useState(-1);
+  const [text, setText] = useState('');
   const [submitted, setSubmitted] = useState(false);
   const options = quiz.options || [];
+  const isOpen = quiz.kind === 'open' || !options.length;
+  const canSubmit = isOpen ? text.trim().length > 0 : selected >= 0;
 
   function submit() {
-    if (selected < 0 || submitted || disabled) return;
+    if (!canSubmit || submitted || disabled) return;
     setSubmitted(true);
+    if (isOpen) {
+      onSubmit(`我的回答：${text.trim()}`);
+      return;
+    }
     const letter = String.fromCharCode(65 + selected);
     onSubmit(`我选${letter}：${options[selected]}`);
   }
@@ -28,30 +36,42 @@ function QuizCard({ quiz, disabled, onSubmit }) {
   return (
     <div className="quiz-card">
       <div className="quiz-head">
-        <span className="quiz-tag">随堂测验</span>
+        <span className="quiz-tag">{isOpen ? '随堂问答' : '随堂测验'}</span>
         {quiz.subject && <span className="quiz-subject">{quiz.subject}</span>}
+        {quiz.source === 'self' && <span className="quiz-subject">自拟题</span>}
       </div>
       <div className="quiz-stem">{quiz.stem}</div>
-      <div className="quiz-options">
-        {options.map((opt, i) => (
-          <button
-            key={i}
-            className={`quiz-option${selected === i ? ' on' : ''}`}
-            disabled={submitted}
-            onClick={() => setSelected(i)}
-          >
-            <span className="quiz-letter">{String.fromCharCode(65 + i)}</span>
-            <span>{opt.replace(/^[A-H][.、．]\s*/, '')}</span>
-          </button>
-        ))}
-      </div>
+      {isOpen ? (
+        <textarea
+          className="quiz-answer"
+          rows={3}
+          placeholder="写下你的答案…"
+          value={text}
+          disabled={submitted}
+          onChange={(e) => setText(e.target.value)}
+        />
+      ) : (
+        <div className="quiz-options">
+          {options.map((opt, i) => (
+            <button
+              key={i}
+              className={`quiz-option${selected === i ? ' on' : ''}`}
+              disabled={submitted}
+              onClick={() => setSelected(i)}
+            >
+              <span className="quiz-letter">{String.fromCharCode(65 + i)}</span>
+              <span>{opt.replace(/^[A-H][.、．]\s*/, '')}</span>
+            </button>
+          ))}
+        </div>
+      )}
       <div className="quiz-foot">
         {submitted ? (
           <span className="quiz-done">已提交，等待判题…</span>
         ) : (
           <button
             className="primary"
-            disabled={selected < 0 || disabled}
+            disabled={!canSubmit || disabled}
             onClick={submit}
           >
             提交答案
@@ -365,7 +385,6 @@ export default function ChatPanel({ token, username, llm, onLogout, onOpenSettin
           {!messages.length && (
             <div className="welcome">
               <h2>中文医疗知识图谱问答</h2>
-              <p>试试：「高血压常用什么药？」「二甲双胍有什么不良反应？」</p>
               <p className="dim">回答基于知识图谱证据，不构成诊疗建议。</p>
             </div>
           )}

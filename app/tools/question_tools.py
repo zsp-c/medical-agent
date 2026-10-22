@@ -7,7 +7,7 @@
 """
 
 import json
-from typing import Any, List
+from typing import Any, List, Optional
 
 from openjiuwen.core.foundation.tool import LocalFunction, tool
 
@@ -40,19 +40,26 @@ def make_question_tools(service: QuestionService) -> List[LocalFunction]:
         return _dumps(service.search(query, subject or None, limit))
 
     async def present_quiz(
-        stem: str, options: List[str], subject: str = "", source: str = ""
+        stem: str, options: Optional[List[str]] = None, subject: str = "", source: str = ""
     ) -> str:
-        """把一道单选题以互动题卡的形式展示给用户作答。
+        """把一道题以互动题卡的形式展示给用户作答（选择题或问答题均可）。
 
-        题卡推送到前端后，用户会选择选项提交，其作答作为下一条消息发回。
+        题目可以取自 search_questions 的真题，也可以由你按讲过的知识点自行命题；
+        题库里没有合适真题、或你想考的东西题库覆盖不到时，直接自拟即可。
+
+        题型由 options 决定：传了选项就是单选题（用户在题卡上点选提交）；
+        不传 options 就是问答题（用户在题卡上写答案提交）。
+        问答题要保证题目本身信息完整、答案能用一两句话讲清，不要出需要长篇论述的题。
+
         纪律：一次只出一题；调用本工具后用一两句话过渡并结束本轮，不要自己公布答案；
-        用户作答后先判对错，再对照解析讲解。
+        用户作答后先判对错，再对照标准答案讲解。
 
         Args:
-            stem: 题干（通常取自 search_questions 结果，也可按讲过的知识点自出）。
-            options: 选项列表，需带字母前缀（如 ["A. 选项一", "B. 选项二"]），最多 8 个。
-            subject: 可选，题目所属学科。
-            source: 可选，题目来源，默认 question_bank。
+            stem: 题干（取自检索结果时原样传入；自拟时自己写清题意）。
+            options: 选项列表，选填。传入则出单选题，需带字母前缀（如 ["A. …", "B. …"]），最多 8 个；
+                留空则出问答题。
+            subject: 可选，题目所属学科（自拟时可不填）。
+            source: 可选，来源标注：真题填 question_bank，自拟留空（自动记为自拟）。
 
         Returns:
             JSON 字符串：displayed=true 表示题卡已推送。

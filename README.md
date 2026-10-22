@@ -196,6 +196,35 @@ docker run -d --name oj-embed -p 8080:80 -v <项目路径>/data/models:/data `
 离线可用、零配额。SDK 的 scope 检索路径硬编码 OpenAI 兼容 `APIEmbedding`，因此本地必须走
 HTTP 端点（进程内嵌入插不进去），TEI 是最省心的选择。
 
+### GPU 加速（可选，强烈建议为题库全量导入开启）
+
+bge-m3 在 CPU 上跑满 16 核也只有约 **110 条/分钟**（3.9 万题要 6 小时）；同一模型换成 GPU 推理
+通常快 20~30 倍，全量导入可缩到 **10~20 分钟**。模型与权重不变，所以**向量空间不变**：
+已导入的向量无需重建，切换只影响新的嵌入速度（检索侧单条编码本来就是毫秒级，收益主要在批量导入）。
+
+前提：宿主机有 NVIDIA 显卡、装好驱动与 `nvidia-container-toolkit`
+（Windows 用 Docker Desktop 的 WSL2 后端并启用 GPU 支持，`docker run --gpus all` 能跑通即可验证）。
+
+```powershell
+# 1) 停掉 CPU 版容器（同一端口）
+docker rm -f oj-embed
+
+# 2) 起 GPU 版（镜像 tag 去掉 cpu 前缀；max-batch-tokens 可按显存放宽）
+docker run -d --name oj-embed --gpus all -p 8080:80 -v <项目路径>/data/models:/data `
+  ghcr.io/huggingface/text-embeddings-inference:1.8.3-gpu --model-id /data/bge-m3 `
+  --max-batch-tokens 16384 --auto-truncate
+
+# 3) 确认端点与维度（应返回 1024 维）
+docker logs --tail 20 oj-embed
+```
+
+显存参考：bge-m3 fp16 权重约 1.2GB，**4GB 显存可跑**（把 `--max-batch-tokens` 降到 4096），
+8GB 以上可放宽到 16384 或更高。`.env` 的三项配置**完全不变**。
+
+> 未在开发机实测：本机为 RTX 3050 Ti（4GB）且当时正在跑 CPU 导入，未中断验证。
+> 如 `--gpus all` 报错，先确认 `docker run --rm --gpus all nvidia/cuda:12.2.0-base-ubuntu22.04 nvidia-smi`
+> 能输出显卡信息，再换 TEI GPU 镜像。
+
 ## 起图谱（可选，不起也能跑）
 
 有 Docker 时用单容器起 Neo4j（容器名 `oj-neo4j`，镜像 `neo4j:5.26-community`，端口 7474/7687）：
@@ -250,6 +279,12 @@ embedding 任一可用。
 .\.venv\Scripts\python.exe scripts\import_question_bank.py --dry-run  # 只统计题量，不嵌入
 ```
 
+- **导入耗时完全取决于 embedding 算力**：本地 CPU（TEI CPU 版，16 核打满）约 110 条/分钟、全量约 6 小时；
+  有 NVIDIA 显卡时按上文"GPU 加速"换成 GPU 版容器，可缩到 10~20 分钟；用云端 embedding 也快，
+  但会换掉向量空间、必须删集合重建。**换 GPU 不换模型，向量空间不变，已有数据无需重建。**
+- 查进度不要看脚本日志（stdout 是块缓冲，可能长时间不刷新），用集合计数：
+  `.\.venv\Scripts\python.exe -c "import chromadb;print(chromadb.PersistentClient('data/chroma').get_collection('question_bank').count())"`
+- 迁移到其他服务器时**直接拷 `data/chroma` 目录即可，无需重新嵌入**（前提：目标机仍是同一 embedding 模型与维度）
 - 检索文本 = 学科 + 标题 + 题干 + 选项；答案/解析只进 metadata（不参与向量）
 - question_id = sha1(相对路径#题号)，幂等；集合与用户记忆集合物理隔离，全局共享
 - 题库未导入时 `search_questions` / `present_quiz` 自动降级返回空（不阻断对话）
