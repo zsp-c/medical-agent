@@ -20,6 +20,14 @@ dependencies = [
     "aiosqlite>=0.19",
     # 长期记忆的语义检索向量库（本地持久化，无需 etcd/minio）
     "chromadb>=1.0",
+    # 后端路由层（server/）：HTTP ⇄ AgentPool 薄转发 + SSE
+    "fastapi>=0.110",
+    "uvicorn>=0.29",
+    # 用户体系：JWT 签发/校验（口令哈希用 stdlib PBKDF2，零依赖）
+    "PyJWT>=2.8",
+    # 上传文件解析：Word / PPT 提取纯文本（图片走视觉模型 caption，无额外依赖）
+    "python-docx>=1.1",
+    "python-pptx>=1.0",
 ]
 
 [build-system]
@@ -27,4 +35,4 @@ requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
 
 [tool.setuptools.packages.find]
-include = ["app*"]
+include = ["app*", "server*"]

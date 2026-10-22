@@ -12,6 +12,7 @@
 - 引擎未装配（`engine=None`）时整体降级为无记忆
 """
 
+import asyncio
 import logging
 from typing import List, Optional, Protocol, Sequence
 
@@ -47,23 +48,32 @@ class MemoryService:
         scope_id: str,
         engine: Optional[MemoryEngine] = None,
         num: int = 10,
+        timeout_seconds: float = 5.0,
     ) -> None:
         self._scope_id = scope_id
         self._engine = engine
         self._num = num
+        # 检索是本轮的固定前置成本：嵌入接口慢时宁可本轮无记忆，也不把用户堵在这里
+        self._timeout = timeout_seconds
 
     @property
     def enabled(self) -> bool:
         return self._engine is not None
 
     async def retrieve(self, user_id: str, query: str) -> List[MemoryHit]:
-        """检索与当前问题相关的长期记忆；失败返回空列表。"""
+        """检索与当前问题相关的长期记忆；失败或超时返回空列表。"""
         if self._engine is None or not user_id:
             return []
         try:
-            return await self._engine.search(
-                user_id=user_id, scope_id=self._scope_id, query=query, num=self._num
+            return await asyncio.wait_for(
+                self._engine.search(
+                    user_id=user_id, scope_id=self._scope_id, query=query, num=self._num
+                ),
+                timeout=self._timeout,
             )
+        except asyncio.TimeoutError:
+            logger.warning("长期记忆检索超时（>%.1fs），本轮降级为无记忆", self._timeout)
+            return []
         except Exception:
             logger.warning("长期记忆检索失败，本轮降级为无记忆", exc_info=True)
             return []

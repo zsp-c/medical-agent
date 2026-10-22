@@ -12,7 +12,7 @@
 import asyncio
 import logging
 import time
-from typing import Any, AsyncIterator, Dict, List, Sequence
+from typing import Any, AsyncIterator, Dict, List, Optional, Sequence
 
 from openjiuwen.core.runner import Runner
 
@@ -24,19 +24,21 @@ from app.services.memory_service import MemoryService
 logger = logging.getLogger(__name__)
 
 
-def compose_query(query: str, hits: List[MemoryHit]) -> str:
-    """把长期记忆拼进本轮 query。无命中时原样返回，不污染输入。"""
-    if not hits:
-        return query
+def compose_query(
+    query: str,
+    hits: List[MemoryHit],
+    files: Sequence[Dict[str, str]] = (),
+) -> str:
+    """把长期记忆与上传文件正文拼进本轮 query。两者皆无命中时原样返回，不污染输入。"""
+    sections: List[str] = []
     memory_lines = "\n".join(f"- {hit.content}" for hit in hits if hit.content)
-    if not memory_lines:
+    if memory_lines:
+        sections.append(f"[长期记忆（来自历史会话的沉淀，仅供参考，可能过时）]\n{memory_lines}")
+    for block in files:
+        sections.append(f"[用户上传的文件《{block['name']}》内容]\n{block['text']}")
+    if not sections:
         return query
-    return (
-        "[长期记忆（来自历史会话的沉淀，仅供参考，可能过时）]\n"
-        f"{memory_lines}\n\n"
-        "[当前问题]\n"
-        f"{query}"
-    )
+    return "\n\n".join(sections) + f"\n\n[当前问题]\n{query}"
 
 
 def extract_text(result: Any) -> str:
@@ -59,15 +61,66 @@ class AgentService:
         context: ContextService,
         graph: GraphQueryService,
         memory: MemoryService,
+        questions: Optional[Any] = None,
+        files: Optional[Any] = None,
+        metrics: Optional[Any] = None,
     ) -> None:
         self._agent = agent
         self._context = context
         self._graph = graph
         self._memory = memory
+        # 题库服务（search_questions / present_quiz 的工具事件与题卡收集器）
+        self._questions = questions
+        # 上传文件服务（按 attachments 注入文件正文，缺省不启用）
+        self._files = files
+        # 分阶段耗时/token 采集器（缺省时只保留总耗时）
+        self._metrics = metrics
         # 后台沉淀的任务与串行锁：同一 (user_id, session_id) 不允许并发写记忆
         self._bg_tasks: set[asyncio.Task] = set()
         self._bg_keys: Dict[asyncio.Task, str] = {}
         self._bg_locks: Dict[str, asyncio.Lock] = {}
+
+    def _load_files(self, req: ChatRequest) -> List[Dict[str, str]]:
+        """读取本轮携带的上传文件正文（归属与就绪状态校验在 FileService 内）。"""
+        if self._files is None or not req.attachments:
+            return []
+        return self._files.load_texts(req.user_id, req.attachments)
+
+    # ---- 分阶段耗时/token -------------------------------------------------
+
+    def _timing_meta(
+        self, context_ms: int, memory_ms: int, runner_ms: int
+    ) -> Dict[str, Any]:
+        """组装 meta["timing"]：编排各阶段耗时 + 本轮模型/工具调用明细。"""
+        timing: Dict[str, Any] = {
+            "context_ms": context_ms,
+            "memory_ms": memory_ms,
+            "runner_ms": runner_ms,
+        }
+        if self._metrics is not None:
+            timing.update(self._metrics.snapshot())
+        return timing
+
+    def _log_timing(self, req: ChatRequest, meta: Dict[str, Any]) -> None:
+        """把本轮耗时与 token 汇总写进服务端日志（不含回答内容）。"""
+        timing = meta["timing"]
+        tools = ",".join(
+            f"{c['name']}:{c['elapsed_ms']}ms" for c in timing.get("tool_calls", [])
+        )
+        logger.info(
+            "chat timing: user=%s session=%s total=%dms context=%dms memory=%dms "
+            "runner=%dms model_calls=%d prompt_tok=%s completion_tok=%s tools=[%s]",
+            req.user_id,
+            req.session_id,
+            meta["elapsed_ms"],
+            timing["context_ms"],
+            timing["memory_ms"],
+            timing["runner_ms"],
+            timing.get("model_call_count", 0),
+            timing.get("prompt_tokens_total"),
+            timing.get("completion_tokens_total"),
+            tools,
+        )
 
     async def handle_chat(self, req: ChatRequest) -> ChatResponse:
         started = time.perf_counter()
@@ -76,20 +129,31 @@ class AgentService:
         self._context.ensure_session(req.user_id, req.session_id)
 
         # 2 读近期消息：既是归档的完整历史，也是长期记忆沉淀的素材
+        t = time.perf_counter()
         recent: List[Message] = self._context.load_recent(req.user_id, req.session_id)
+        context_ms = round((time.perf_counter() - t) * 1000)
 
-        # 3 检索长期记忆（失败降级为空，不阻断对话）
+        # 3 检索长期记忆（失败降级为空，不阻断对话）+ 读取上传文件正文
+        t = time.perf_counter()
         hits = await self._memory.retrieve(req.user_id, req.query)
+        file_blocks = self._load_files(req)
+        memory_ms = round((time.perf_counter() - t) * 1000)
 
-        # 4 推理 + 工具；模型按需调用白名单图谱工具，Cypher 由服务层参数化生成
+        # 4 推理 + 工具；模型按需调用白名单图谱/题库工具，检索细节全在服务层
         self._graph.begin_round()
+        if self._questions is not None:
+            self._questions.begin_round()
+        if self._metrics is not None:
+            self._metrics.begin_round()
+        t = time.perf_counter()
         result = await Runner.run_agent(
             agent=self._agent,
             inputs={
-                "query": compose_query(req.query, hits),
+                "query": compose_query(req.query, hits, file_blocks),
                 "conversation_id": req.session_id,
             },
         )
+        runner_ms = round((time.perf_counter() - t) * 1000)
         answer = extract_text(result)
         evidence: List[EntityBrief] = self._graph.evidence
 
@@ -121,8 +185,16 @@ class AgentService:
             "memory_scheduled": memory_scheduled,
             "history_count": len(recent),
             "messages_written": written,
+            "files_used": len(file_blocks),
             "elapsed_ms": round((time.perf_counter() - started) * 1000),
         }
+        meta["timing"] = self._timing_meta(context_ms, memory_ms, runner_ms)
+        self._log_timing(req, meta)
+        # 本轮若调用了 present_quiz，把题卡随响应带回（前端据此渲染互动题卡）
+        if self._questions is not None:
+            quiz = self._questions.pop_quiz()
+            if quiz:
+                meta["quiz"] = quiz
         return ChatResponse(
             answer=answer,
             request_id=req.request_id,
@@ -137,21 +209,32 @@ class AgentService:
         事件序列（dict，由后端映射成 SSE）：
         - {"event": "tool_call", "name": ...}        模型发起一次工具调用
         - {"event": "tool_result", "name": ...}      工具返回（不带结果体，避免刷屏）
+        - {"event": "quiz", "stem"/"options"/...}    present_quiz 推送的互动题卡（无答案）
         - {"event": "delta", "text": ...}            最终回答的增量文本（llm_output）
         - {"event": "done", "response": {...}}       结束，含完整 ChatResponse
         模型的思考过程（llm_reasoning）不透出——它不是回答的一部分。
         """
         started = time.perf_counter()
 
-        # 1~3 与非流式一致：归属校验 → 短期上下文 → 长期记忆检索
+        # 1~3 与非流式一致：归属校验 → 短期上下文 → 长期记忆检索 + 上传文件正文
         self._context.ensure_session(req.user_id, req.session_id)
+        t = time.perf_counter()
         recent: List[Message] = self._context.load_recent(req.user_id, req.session_id)
+        context_ms = round((time.perf_counter() - t) * 1000)
+        t = time.perf_counter()
         hits = await self._memory.retrieve(req.user_id, req.query)
+        file_blocks = self._load_files(req)
+        memory_ms = round((time.perf_counter() - t) * 1000)
 
         # 4 流式推理 + 工具
         # 工具调用发生在等待 Runner 下一个 chunk 的间隙里（同步钩子无法直接 yield），
         # 因此用队列合并两路事件：Runner chunk 泵 + 工具事件钩子。
         self._graph.begin_round()
+        if self._questions is not None:
+            self._questions.begin_round()
+        if self._metrics is not None:
+            self._metrics.begin_round()
+        t_runner = time.perf_counter()
         queue: asyncio.Queue = asyncio.Queue()
         pump_done = object()
 
@@ -160,7 +243,7 @@ class AgentService:
                 async for chunk in Runner.run_agent_streaming(
                     agent=self._agent,
                     inputs={
-                        "query": compose_query(req.query, hits),
+                        "query": compose_query(req.query, hits, file_blocks),
                         "conversation_id": req.session_id,
                     },
                 ):
@@ -170,9 +253,10 @@ class AgentService:
             finally:
                 queue.put_nowait(("end", pump_done))
 
-        self._graph.set_tool_hook(
-            lambda name, phase: queue.put_nowait(("tool", (name, phase)))
-        )
+        tool_hook = lambda name, phase: queue.put_nowait(("tool", (name, phase)))  # noqa: E731
+        self._graph.set_tool_hook(tool_hook)
+        if self._questions is not None:
+            self._questions.set_tool_hook(tool_hook)
         task = asyncio.create_task(_pump())
         parts: List[str] = []
         try:
@@ -188,6 +272,15 @@ class AgentService:
                         "event": "tool_call" if phase == "start" else "tool_result",
                         "name": name,
                     }
+                    # present_quiz 结束即把题卡推给前端（答案不下发，用户作答后由模型判题）
+                    if (
+                        name == "present_quiz"
+                        and phase == "end"
+                        and self._questions is not None
+                    ):
+                        quiz = self._questions.pop_quiz()
+                        if quiz:
+                            yield {"event": "quiz", **quiz}
                     continue
                 ctype = getattr(payload, "type", "")
                 cpayload = getattr(payload, "payload", None) or {}
@@ -198,8 +291,11 @@ class AgentService:
                         yield {"event": "delta", "text": text}
         finally:
             self._graph.set_tool_hook(None)
+            if self._questions is not None:
+                self._questions.set_tool_hook(None)
             if not task.done():
                 task.cancel()
+        runner_ms = round((time.perf_counter() - t_runner) * 1000)
         answer = "".join(parts)
         evidence: List[EntityBrief] = self._graph.evidence
 
@@ -220,8 +316,11 @@ class AgentService:
             "memory_scheduled": memory_scheduled,
             "history_count": len(recent),
             "messages_written": written,
+            "files_used": len(file_blocks),
             "elapsed_ms": round((time.perf_counter() - started) * 1000),
         }
+        meta["timing"] = self._timing_meta(context_ms, memory_ms, runner_ms)
+        self._log_timing(req, meta)
         yield {
             "event": "done",
             "response": ChatResponse(

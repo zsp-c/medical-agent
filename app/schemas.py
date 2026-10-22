@@ -50,6 +50,7 @@ class ChatRequest(BaseModel):
 
     user_id 必须来自后端鉴权结果，**不得**由前端自行传入。
     `llm` 缺省时使用服务端 .env 里的默认模型配置（示例/自测路径）。
+    `attachments` 为本轮携带的上传文件 file_id 列表（经 FileService 归属校验后注入正文）。
     """
 
     user_id: str
@@ -57,6 +58,7 @@ class ChatRequest(BaseModel):
     query: str
     request_id: str = ""
     llm: Optional[LLMConfig] = None
+    attachments: List[str] = Field(default_factory=list)
     options: Dict[str, Any] = Field(default_factory=dict)
 
 
@@ -104,13 +106,13 @@ class ChatResponse(BaseModel):
 class RelationEdge(BaseModel):
     src_key: str
     src_name: str = ""
-    src_source: str = ""  # 源端实体的来源库（PrimeKG 的 x_source）
+    src_source: str = ""  # 源端实体的来源库
     relation_code: str = ""
     relation_display: str = ""
     dst_key: str
     dst_name: str = ""
     dst_type: str = ""
-    dst_source: str = ""  # 目标端实体的来源库（PrimeKG 的 y_source）
+    dst_source: str = ""  # 目标端实体的来源库
     direction: Literal["out", "in"] = "out"
 
 

@@ -1,24 +1,61 @@
-src_key,src_name_original,src_name_zh,src_type,src_desc,relation_code,relation_display,dst_key,dst_name_original,dst_name_zh,dst_type,dst_desc,source_dataset
-disease:hypertension,Hypertension,高血压,disease,"以体循环动脉血压持续升高为主要表现的慢性疾病",associated_with,associated with,symptom:headache,Headache,头痛,symptom,"头部疼痛的主观不适",SampleKG
-disease:hypertension,Hypertension,高血压,disease,"以体循环动脉血压持续升高为主要表现的慢性疾病",associated_with,associated with,symptom:dizziness,Dizziness,眩晕,symptom,"自身或环境的旋转感与平衡障碍",SampleKG
-disease:hypertension,Hypertension,高血压,disease,"以体循环动脉血压持续升高为主要表现的慢性疾病",increases_risk_of,increases risk of,disease:stroke,Stroke,脑卒中,disease,"脑血管突然破裂或阻塞引起的急性脑功能障碍",SampleKG
-disease:hypertension,Hypertension,高血压,disease,"以体循环动脉血压持续升高为主要表现的慢性疾病",increases_risk_of,increases risk of,disease:myocardial_infarction,Myocardial infarction,心肌梗死,disease,"冠状动脉急性闭塞导致心肌缺血坏死",SampleKG
-disease:hypertension,Hypertension,高血压,disease,"以体循环动脉血压持续升高为主要表现的慢性疾病",treated_by,treated by,drug:amlodipine,Amlodipine,氨氯地平,drug,"二氢吡啶类钙通道阻滞剂",SampleKG
-disease:hypertension,Hypertension,高血压,disease,"以体循环动脉血压持续升高为主要表现的慢性疾病",treated_by,treated by,drug:losartan,Losartan,氯沙坦,drug,"血管紧张素II受体拮抗剂",SampleKG
-disease:hypertension,Hypertension,高血压,disease,"以体循环动脉血压持续升高为主要表现的慢性疾病",has_phenotype,has phenotype,phenotype:blood_pressure,Blood pressure,血压,phenotype,"血液对血管壁的侧压力",SampleKG
-phenotype:insulin_resistance,Insulin resistance,胰岛素抵抗,phenotype,"靶组织对胰岛素敏感性下降",causes,causes,disease:type2_diabetes,Type 2 diabetes mellitus,2型糖尿病,disease,"以胰岛素抵抗和相对胰岛素分泌不足为特征的代谢性疾病",SampleKG
-disease:type2_diabetes,Type 2 diabetes mellitus,2型糖尿病,disease,"以胰岛素抵抗和相对胰岛素分泌不足为特征的代谢性疾病",has_phenotype,has phenotype,phenotype:insulin_resistance,Insulin resistance,胰岛素抵抗,phenotype,"靶组织对胰岛素敏感性下降",SampleKG
-disease:type2_diabetes,Type 2 diabetes mellitus,2型糖尿病,disease,"以胰岛素抵抗和相对胰岛素分泌不足为特征的代谢性疾病",treated_by,treated by,drug:metformin,Metformin,二甲双胍,drug,"双胍类口服降糖药",SampleKG
-disease:type2_diabetes,Type 2 diabetes mellitus,2型糖尿病,disease,"以胰岛素抵抗和相对胰岛素分泌不足为特征的代谢性疾病",increases_risk_of,increases risk of,disease:retinopathy,Diabetic retinopathy,糖尿病视网膜病变,disease,"糖尿病引起的视网膜微血管损伤",SampleKG
-disease:obesity,Obesity,肥胖,disease,"体脂过度蓄积并影响健康的慢性状态",increases_risk_of,increases risk of,disease:type2_diabetes,Type 2 diabetes mellitus,2型糖尿病,disease,"以胰岛素抵抗和相对胰岛素分泌不足为特征的代谢性疾病",SampleKG
-disease:obesity,Obesity,肥胖,disease,"体脂过度蓄积并影响健康的慢性状态",increases_risk_of,increases risk of,disease:hyperlipidemia,Hyperlipidemia,高脂血症,disease,"血浆脂质水平异常升高",SampleKG
-disease:hyperlipidemia,Hyperlipidemia,高脂血症,disease,"血浆脂质水平异常升高",increases_risk_of,increases risk of,disease:myocardial_infarction,Myocardial infarction,心肌梗死,disease,"冠状动脉急性闭塞导致心肌缺血坏死",SampleKG
-drug:amlodipine,Amlodipine,氨氯地平,drug,"二氢吡啶类钙通道阻滞剂",belongs_to,belongs to,drugclass:antihypertensive,Antihypertensive drug,降压药,drug_class,"用于降低血压的药物类别",SampleKG
-drug:losartan,Losartan,氯沙坦,drug,"血管紧张素II受体拮抗剂",belongs_to,belongs to,drugclass:antihypertensive,Antihypertensive drug,降压药,drug_class,"用于降低血压的药物类别",SampleKG
-gene:ace,ACE,血管紧张素转换酶基因,gene,"编码血管紧张素转换酶的基因",encodes,encodes,protein:ace,ACE protein,血管紧张素转换酶,protein,"催化血管紧张素I转化为血管紧张素II",SampleKG
-gene:agt,AGT,血管紧张素原基因,gene,"编码血管紧张素原的基因",encodes,encodes,protein:angiotensinogen,Angiotensinogen,血管紧张素原,protein,"肾素的作用底物",SampleKG
-anatomy:kidney,Kidney,肾脏,anatomy,"泌尿与血压调节器官",produces,produces,protein:renin,Renin,肾素,protein,"由肾脏球旁细胞分泌的蛋白酶",SampleKG
-protein:renin,Renin,肾素,protein,"由肾脏球旁细胞分泌的蛋白酶",cleaves,cleaves,protein:angiotensinogen,Angiotensinogen,血管紧张素原,protein,"肾素的作用底物",SampleKG
-protein:ace,ACE protein,血管紧张素转换酶,protein,"催化血管紧张素I转化为血管紧张素II",produces,produces,protein:angiotensin_ii,Angiotensin II,血管紧张素II,protein,"强效升压肽",SampleKG
-protein:angiotensin_ii,Angiotensin II,血管紧张素II,protein,"强效升压肽",increases,increases,phenotype:blood_pressure,Blood pressure,血压,phenotype,"血液对血管壁的侧压力",SampleKG
-drug:losartan,Losartan,氯沙坦,drug,"血管紧张素II受体拮抗剂",targets,targets,protein:angiotensin_ii,Angiotensin II,血管紧张素II,protein,"强效升压肽",SampleKG
+﻿src_key,src_name_original,src_name_zh,src_type,src_desc,dst_key,dst_name_original,dst_name_zh,dst_type,dst_desc,relation_code,relation_display,source_dataset
+CMKG:disease:老年肺炎,老年肺炎,老年肺炎,disease,,CMKG:treatment:高血压,高血压,高血压,treatment,,disease_acompany_disease,并发症,OpenCMKG
+CMKG:treatment:高血压,高血压,高血压,treatment,,CMKG:symptom:血压高,血压高,血压高,symptom,,disease_has_symptom,疾病对应症状,OpenCMKG
+CMKG:treatment:高血压,高血压,高血压,treatment,,"CMKG:symptom:""重压感,紧箍感""","""重压感,紧箍感""","""重压感,紧箍感""",symptom,,disease_has_symptom,疾病对应症状,OpenCMKG
+CMKG:treatment:高血压,高血压,高血压,treatment,,CMKG:disease:神经性呕吐,神经性呕吐,神经性呕吐,disease,,disease_has_symptom,疾病对应症状,OpenCMKG
+CMKG:treatment:高血压,高血压,高血压,treatment,,CMKG:disease:眼花,眼花,眼花,disease,,disease_has_symptom,疾病对应症状,OpenCMKG
+CMKG:treatment:高血压,高血压,高血压,treatment,,CMKG:symptom:头晕目眩,头晕目眩,头晕目眩,symptom,,disease_has_symptom,疾病对应症状,OpenCMKG
+CMKG:treatment:高血压,高血压,高血压,treatment,,CMKG:symptom:颈部搏动,颈部搏动,颈部搏动,symptom,,disease_has_symptom,疾病对应症状,OpenCMKG
+CMKG:treatment:高血压,高血压,高血压,treatment,,CMKG:symptom:心脏主动脉瓣返流,心脏主动脉瓣返流,心脏主动脉瓣返流,symptom,,disease_has_symptom,疾病对应症状,OpenCMKG
+CMKG:treatment:高血压,高血压,高血压,treatment,,CMKG:disease:头晕,头晕,头晕,disease,,disease_has_symptom,疾病对应症状,OpenCMKG
+CMKG:treatment:高血压,高血压,高血压,treatment,,CMKG:symptom:乏力,乏力,乏力,symptom,,disease_has_symptom,疾病对应症状,OpenCMKG
+CMKG:treatment:高血压,高血压,高血压,treatment,,CMKG:disease:中风,中风,中风,disease,,disease_acompany_disease,并发症,OpenCMKG
+CMKG:treatment:高血压,高血压,高血压,treatment,,CMKG:department:心内科,心内科,心内科,department,,disease_belong_department,疾病所属科室,OpenCMKG
+CMKG:treatment:高血压,高血压,高血压,treatment,,CMKG:drug:厄贝沙坦片,厄贝沙坦片,厄贝沙坦片,drug,,disease_common_drug,疾病一般用药,OpenCMKG
+CMKG:treatment:高血压,高血压,高血压,treatment,,CMKG:drug:二十五味珊瑚丸,二十五味珊瑚丸,二十五味珊瑚丸,drug,,disease_common_drug,疾病一般用药,OpenCMKG
+CMKG:treatment:高血压,高血压,高血压,treatment,,CMKG:drug:复方天麻蜜环糖肽片,复方天麻蜜环糖肽片,复方天麻蜜环糖肽片,drug,,disease_recommand_drug,疾病推荐药物,OpenCMKG
+CMKG:treatment:高血压,高血压,高血压,treatment,,CMKG:drug:盐酸乐卡地平片,盐酸乐卡地平片,盐酸乐卡地平片,drug,,disease_recommand_drug,疾病推荐药物,OpenCMKG
+CMKG:treatment:高血压,高血压,高血压,treatment,,CMKG:drug:马来酸依那普利片,马来酸依那普利片,马来酸依那普利片,drug,,disease_recommand_drug,疾病推荐药物,OpenCMKG
+CMKG:treatment:高血压,高血压,高血压,treatment,,CMKG:drug:Ⅰ,Ⅰ,Ⅰ,drug,,disease_recommand_drug,疾病推荐药物,OpenCMKG
+CMKG:treatment:高血压,高血压,高血压,treatment,,CMKG:drug:替米沙坦片,替米沙坦片,替米沙坦片,drug,,disease_recommand_drug,疾病推荐药物,OpenCMKG
+CMKG:treatment:高血压,高血压,高血压,treatment,,CMKG:drug:马来酸氨氯地平片,马来酸氨氯地平片,马来酸氨氯地平片,drug,,disease_recommand_drug,疾病推荐药物,OpenCMKG
+CMKG:treatment:高血压,高血压,高血压,treatment,,CMKG:drug:盐酸拉贝洛尔片,盐酸拉贝洛尔片,盐酸拉贝洛尔片,drug,,disease_recommand_drug,疾病推荐药物,OpenCMKG
+CMKG:treatment:高血压,高血压,高血压,treatment,,CMKG:drug:苯磺酸氨氯地平胶囊,苯磺酸氨氯地平胶囊,苯磺酸氨氯地平胶囊,drug,,disease_recommand_drug,疾病推荐药物,OpenCMKG
+CMKG:treatment:高血压,高血压,高血压,treatment,,CMKG:drug:脑立清丸,脑立清丸,脑立清丸,drug,,disease_recommand_drug,疾病推荐药物,OpenCMKG
+CMKG:treatment:高血压,高血压,高血压,treatment,,CMKG:drug:缬沙坦胶囊,缬沙坦胶囊,缬沙坦胶囊,drug,,disease_recommand_drug,疾病推荐药物,OpenCMKG
+CMKG:treatment:高血压,高血压,高血压,treatment,,CMKG:drug:回心康片,回心康片,回心康片,drug,,disease_recommand_drug,疾病推荐药物,OpenCMKG
+CMKG:treatment:高血压,高血压,高血压,treatment,,CMKG:drug:二十五味珊瑚丸,二十五味珊瑚丸,二十五味珊瑚丸,drug,,disease_recommand_drug,疾病推荐药物,OpenCMKG
+CMKG:treatment:高血压,高血压,高血压,treatment,,CMKG:drug:薯蓣皂苷片,薯蓣皂苷片,薯蓣皂苷片,drug,,disease_recommand_drug,疾病推荐药物,OpenCMKG
+CMKG:treatment:高血压,高血压,高血压,treatment,,CMKG:drug:硝苯地平缓释片Ⅰ,硝苯地平缓释片Ⅰ,硝苯地平缓释片Ⅰ,drug,,disease_recommand_drug,疾病推荐药物,OpenCMKG
+CMKG:treatment:高血压,高血压,高血压,treatment,,CMKG:drug:盐酸贝那普利片,盐酸贝那普利片,盐酸贝那普利片,drug,,disease_recommand_drug,疾病推荐药物,OpenCMKG
+CMKG:treatment:高血压,高血压,高血压,treatment,,CMKG:drug:赖诺普利片,赖诺普利片,赖诺普利片,drug,,disease_recommand_drug,疾病推荐药物,OpenCMKG
+CMKG:treatment:高血压,高血压,高血压,treatment,,CMKG:drug:卡维地洛片,卡维地洛片,卡维地洛片,drug,,disease_recommand_drug,疾病推荐药物,OpenCMKG
+CMKG:treatment:高血压,高血压,高血压,treatment,,CMKG:drug:厄贝沙坦片,厄贝沙坦片,厄贝沙坦片,drug,,disease_recommand_drug,疾病推荐药物,OpenCMKG
+CMKG:treatment:高血压,高血压,高血压,treatment,,CMKG:drug:吲达帕胺滴丸,吲达帕胺滴丸,吲达帕胺滴丸,drug,,disease_recommand_drug,疾病推荐药物,OpenCMKG
+CMKG:treatment:高血压,高血压,高血压,treatment,,CMKG:food:咸鸭蛋,咸鸭蛋,咸鸭蛋,food,,disease_noteat_food,疾病忌吃食物,OpenCMKG
+CMKG:treatment:高血压,高血压,高血压,treatment,,CMKG:food:鸡肝,鸡肝,鸡肝,food,,disease_noteat_food,疾病忌吃食物,OpenCMKG
+CMKG:treatment:高血压,高血压,高血压,treatment,,CMKG:drug:杏仁,杏仁,杏仁,drug,,disease_noteat_food,疾病忌吃食物,OpenCMKG
+CMKG:treatment:高血压,高血压,高血压,treatment,,CMKG:food:腐竹,腐竹,腐竹,food,,disease_noteat_food,疾病忌吃食物,OpenCMKG
+CMKG:treatment:高血压,高血压,高血压,treatment,,CMKG:food:鸡肉,鸡肉,鸡肉,food,,disease_eat_food,疾病可吃食物,OpenCMKG
+CMKG:treatment:高血压,高血压,高血压,treatment,,CMKG:food:芝麻,芝麻,芝麻,food,,disease_eat_food,疾病可吃食物,OpenCMKG
+CMKG:treatment:高血压,高血压,高血压,treatment,,CMKG:food:松子仁,松子仁,松子仁,food,,disease_eat_food,疾病可吃食物,OpenCMKG
+CMKG:treatment:高血压,高血压,高血压,treatment,,CMKG:food:南瓜子仁,南瓜子仁,南瓜子仁,food,,disease_eat_food,疾病可吃食物,OpenCMKG
+CMKG:treatment:高血压,高血压,高血压,treatment,,CMKG:food:芹菜粥,芹菜粥,芹菜粥,food,,disease_recommand_food,疾病推荐食物,OpenCMKG
+CMKG:treatment:高血压,高血压,高血压,treatment,,CMKG:food:胡萝卜粥,胡萝卜粥,胡萝卜粥,food,,disease_recommand_food,疾病推荐食物,OpenCMKG
+CMKG:treatment:高血压,高血压,高血压,treatment,,CMKG:food:葛根粉粥,葛根粉粥,葛根粉粥,food,,disease_recommand_food,疾病推荐食物,OpenCMKG
+CMKG:treatment:高血压,高血压,高血压,treatment,,CMKG:food:灵芝羹,灵芝羹,灵芝羹,food,,disease_recommand_food,疾病推荐食物,OpenCMKG
+CMKG:treatment:高血压,高血压,高血压,treatment,,CMKG:food:香脆芹菜叶,香脆芹菜叶,香脆芹菜叶,food,,disease_recommand_food,疾病推荐食物,OpenCMKG
+CMKG:treatment:高血压,高血压,高血压,treatment,,CMKG:food:清盐菜花,清盐菜花,清盐菜花,food,,disease_recommand_food,疾病推荐食物,OpenCMKG
+CMKG:treatment:高血压,高血压,高血压,treatment,,CMKG:food:素熘菜花,素熘菜花,素熘菜花,food,,disease_recommand_food,疾病推荐食物,OpenCMKG
+CMKG:treatment:高血压,高血压,高血压,treatment,,CMKG:treatment:血压,血压,血压,treatment,,disease_need_check,疾病需要检查,OpenCMKG
+CMKG:treatment:高血压,高血压,高血压,treatment,,CMKG:unknown:动态血压监测(ABPM),动态血压监测(ABPM),动态血压监测(ABPM),unknown,,disease_need_check,疾病需要检查,OpenCMKG
+CMKG:treatment:高血压,高血压,高血压,treatment,,CMKG:unknown:心电图,心电图,心电图,unknown,,disease_need_check,疾病需要检查,OpenCMKG
+CMKG:treatment:高血压,高血压,高血压,treatment,,CMKG:unknown:白细胞介素4(iL-4),白细胞介素4(iL-4),白细胞介素4(iL-4),unknown,,disease_need_check,疾病需要检查,OpenCMKG
+CMKG:treatment:高血压,高血压,高血压,treatment,,CMKG:unknown:速尿激发试验,速尿激发试验,速尿激发试验,unknown,,disease_need_check,疾病需要检查,OpenCMKG
+CMKG:treatment:高血压,高血压,高血压,treatment,,CMKG:unknown:血清白细胞介素3,血清白细胞介素3,血清白细胞介素3,unknown,,disease_need_check,疾病需要检查,OpenCMKG
+CMKG:treatment:高血压,高血压,高血压,treatment,,CMKG:unknown:红细胞聚集性,红细胞聚集性,红细胞聚集性,unknown,,disease_need_check,疾病需要检查,OpenCMKG
+CMKG:treatment:高血压,高血压,高血压,treatment,,CMKG:unknown:紧张度与动脉壁状态,紧张度与动脉壁状态,紧张度与动脉壁状态,unknown,,disease_need_check,疾病需要检查,OpenCMKG
+CMKG:treatment:高血压,高血压,高血压,treatment,,CMKG:drug:甘油三酯,甘油三酯,甘油三酯,drug,,disease_need_check,疾病需要检查,OpenCMKG
+CMKG:treatment:高血压,高血压,高血压,treatment,,CMKG:drug:血管紧张素Ⅱ,血管紧张素Ⅱ,血管紧张素Ⅱ,drug,,disease_need_check,疾病需要检查,OpenCMKG
+CMKG:disease:吡唑酮类中毒,吡唑酮类中毒,吡唑酮类中毒,disease,,CMKG:treatment:高血压,高血压,高血压,treatment,,disease_acompany_disease,并发症,OpenCMKG
+CMKG:disease:缺血性结肠炎,缺血性结肠炎,缺血性结肠炎,disease,,CMKG:treatment:高血压,高血压,高血压,treatment,,disease_acompany_disease,并发症,OpenCMKG

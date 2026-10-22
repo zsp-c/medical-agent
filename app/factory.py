@@ -28,28 +28,26 @@ from openjiuwen.core.sys_operation import (
 )
 
 from app.memory.setup import build_memory_engine
+from app.metrics import MetricsRail
 from app.repositories.conversation_store import (
     ConversationStore,
     SqliteConversationStore,
 )
 from app.repositories.graph_repository import GraphRepository
-from app.repositories.translation_cache import (
-    SqliteTranslationCache,
-    TranslationCache,
-)
 from app.schemas import ChatRequest, ChatResponse, LLMConfig
 from app.services.agent_service import AgentService
 from app.services.context_service import ContextService
+from app.services.file_service import FileService
 from app.services.graph_query_service import (
     GraphQueryService,
     build_graph_repository,
 )
 from app.services.memory_service import MemoryEngine, MemoryService
-from app.services.translation_service import TranslationService
+from app.services.question_service import QuestionService
 from app.settings import Settings, build_react_config, quiet_logs
 from app.throttle import RateGate
 from app.tools.graph_tools import make_graph_tools
-from app.tools.translation_tools import make_translation_tool
+from app.tools.question_tools import make_question_tools
 
 logger = logging.getLogger(__name__)
 
@@ -76,9 +74,10 @@ class BuiltAgent:
     settings: Settings
     store: ConversationStore
     graph: GraphQueryService
+    questions: QuestionService
     context: ContextService
     memory: MemoryService
-    translation: TranslationService
+    files: FileService
     service: AgentService
 
 
@@ -87,10 +86,9 @@ async def build_agent(
     *,
     store: Optional[ConversationStore] = None,
     memory_engine: Optional[MemoryEngine] = None,
-    translation_cache: Optional[TranslationCache] = None,
     graph_repo: Optional[GraphRepository] = None,
+    files: Optional[FileService] = None,
     enable_memory: bool = True,
-    enable_translation: bool = True,
     extra_tools: Sequence[LocalFunction] = (),
 ) -> BuiltAgent:
     """组装一个可直接对话的 Agent。
@@ -99,11 +97,10 @@ async def build_agent(
         settings: 从环境变量加载的配置（BYOK 池会 replace 出每配置副本）
         store: 会话存储；缺省用 SQLite 实现（后端换 PG 时从外部注入）
         memory_engine: 长期记忆引擎；缺省由 `app.memory.setup` 用内置引擎装配
-        translation_cache: 翻译缓存；缺省用 SQLite 实现
         graph_repo: 共享图谱仓储（BYOK 池注入，Agent 池共用一个 Neo4j 连接）；
             传入后本 Agent 的 GraphQueryService 不负责释放它
+        files: 共享上传文件服务（BYOK 池注入）；缺省按 settings 自建
         enable_memory: 置 False 则完全不装记忆（`MemoryService` 自动降级为无记忆）
-        enable_translation: 置 False 则不注册翻译工具
         extra_tools: 额外工具
     """
     quiet_logs()
@@ -120,48 +117,56 @@ async def build_agent(
     )
     agent.ability_manager.add([read_file_card])
 
-    # Agent 推理、记忆抽取、翻译共用同一闸门，按 RPM 上限统一限流
+    # Agent 推理与记忆抽取共用同一闸门，按 RPM 上限统一限流
     gate = RateGate(settings.llm_rpm_limit)
 
-    # 图谱工具：模型只选工具 + 填参数，Cypher 由 GraphQueryService 参数化生成。
+    # 图谱工具 + 题库工具：模型只选工具 + 填参数，检索细节全在服务层。
     # add_ability(card, resource) 是官方统一注册入口。
     graph = GraphQueryService(settings, repo=graph_repo)
-    translation = TranslationService(
-        translation_cache or SqliteTranslationCache(settings.sqlite_path),
-        settings=settings,
-        gate=gate,
-    )
-    tools: list[LocalFunction] = [*make_graph_tools(graph)]
-    if enable_translation:
-        tools.append(make_translation_tool(translation))
-    tools.extend(extra_tools)
+    questions = QuestionService(settings)
+    tools: list[LocalFunction] = [
+        *make_graph_tools(graph),
+        *make_question_tools(questions),
+        *extra_tools,
+    ]
     for item in tools:
         agent.ability_manager.add_ability(item.card, item)
 
-    # 技能：只有名称与描述进系统提示词，正文由模型需要时用 read_file 按需加载
+    # 技能：不走 SDK 的 register_skill —— 它会在系统提示里注入
+    # “执行任务前必须先 read_file 读 SKILL.md”的强制指令，每个医疗问题白耗一整轮。
+    # 改为在本项目系统提示词（规则 6）里声明两个手册的路径，模型按需用 read_file 读。
     skills_dir = Path(settings.skills_dir)
     if not skills_dir.is_dir():
         raise FileNotFoundError(f"技能目录不存在：{skills_dir}")
-    await agent.register_skill(str(skills_dir))
 
     await agent.register_rail(ThrottleRail(gate))
+
+    # 分阶段耗时/token 采集：每轮由 AgentService 调 begin_round() 清零、结束后取快照
+    metrics = MetricsRail()
+    await agent.register_rail(metrics)
 
     if enable_memory and memory_engine is None:
         memory_engine = await build_memory_engine(settings, gate=gate)
 
     store = store or SqliteConversationStore(settings.sqlite_path)
     context = ContextService(store, settings.context_window_rounds)
-    memory = MemoryService(settings.memory_scope_id, engine=memory_engine)
+    memory = MemoryService(
+        settings.memory_scope_id,
+        engine=memory_engine,
+        timeout_seconds=settings.memory_retrieve_timeout,
+    )
+    files = files or FileService(settings)
 
     return BuiltAgent(
         agent=agent,
         settings=settings,
         store=store,
         graph=graph,
+        questions=questions,
         context=context,
         memory=memory,
-        translation=translation,
-        service=AgentService(agent, context, graph, memory),
+        files=files,
+        service=AgentService(agent, context, graph, memory, questions, files, metrics),
     )
 
 
@@ -175,8 +180,9 @@ async def close(built: Optional[BuiltAgent] = None) -> None:
         # 先等后台记忆沉淀跑完，再释放它正在使用的记忆引擎（见 agent_service.drain_background）
         await built.service.drain_background()
         built.graph.close()
+        built.questions.close()
         built.store.close()
-        built.translation.close()
+        built.files.close()
         await built.memory.close()
     await Runner.resource_mgr.release()
 
@@ -191,7 +197,7 @@ class AgentPool:
     - **用户 key 只在内存中使用**：哈希后做缓存键，不写 SQLite / Chroma / 日志 / meta，
       不落任何持久层；进程退出即消失（前端把 key 保存在浏览器侧，每次请求随 body 传入）。
     - 不同 LLM 配置各自独立装配：各自的 RateGate（RPM 按 key 隔离）、各自的记忆抽取模型。
-    - 图谱仓储 / 会话库 / 翻译缓存是**共享基础设施**（与模型无关），全池只建一份。
+    - 图谱仓储 / 会话库是**共享基础设施**（与模型无关），全池只建一份。
     - 装配经全局锁串行：`Runner.resource_mgr` 是全局单例，并发装配会互相踩。
     - LRU 上限 `max_size`：被逐出的 Agent 只释放记忆引擎，**不**调
       `Runner.resource_mgr.release()`（全局方法，会拆掉仍在使用的其它 Agent 的资源）；
@@ -207,7 +213,8 @@ class AgentPool:
         # 共享基础设施（惰性创建）
         self._store: Optional[ConversationStore] = None
         self._graph_repo: Optional[GraphRepository] = None
-        self._translation_cache: Optional[TranslationCache] = None
+        self._graph_service: Optional[GraphQueryService] = None
+        self._files: Optional[FileService] = None
 
     # ---- 缓存键：只留哈希，不留 key 本体 ----
     @staticmethod
@@ -221,7 +228,7 @@ class AgentPool:
         if self._store is None:
             self._store = SqliteConversationStore(self._base.sqlite_path)
             self._graph_repo = build_graph_repository(self._base)
-            self._translation_cache = SqliteTranslationCache(self._base.sqlite_path)
+            self._files = FileService(self._base)
 
     async def _get(self, llm: Optional[LLMConfig]) -> BuiltAgent:
         key = self._cache_key(llm)
@@ -245,7 +252,7 @@ class AgentPool:
                         settings,
                         store=self._store,
                         graph_repo=self._graph_repo,
-                        translation_cache=self._translation_cache,
+                        files=self._files,
                     )
                 self._agents[key] = built
                 if len(self._agents) > self._max_size:
@@ -276,6 +283,50 @@ class AgentPool:
         async for event in built.service.handle_chat_stream(req):
             yield event
 
+    # ---- 后端路由层（server/）的共享设施访问器 --------------------------------
+
+    def graph_service(self) -> GraphQueryService:
+        """共享图谱查询服务：实体详情 / 子图等 HTTP 接口复用池内 Neo4j 连接。
+
+        与各 Agent 自带的 GraphQueryService 实例互不影响（各自维护证据收集器）；
+        不拥有 repo（共享 `_graph_repo`，由 `close()` 统一释放）。
+        """
+        self._ensure_shared()
+        if self._graph_service is None:
+            self._graph_service = GraphQueryService(self._base, repo=self._graph_repo)
+        return self._graph_service
+
+    def conversation_store(self) -> ConversationStore:
+        """共享会话存储：会话列表 / 历史消息 / 删除会话等 HTTP 接口用。"""
+        self._ensure_shared()
+        assert self._store is not None
+        return self._store
+
+    def file_service(self) -> FileService:
+        """共享上传文件服务：文件上传 / 列表 / 删除等 HTTP 接口用。"""
+        self._ensure_shared()
+        assert self._files is not None
+        return self._files
+
+    async def forget_memory(self, user_id: str) -> bool:
+        """按 user_id 清空长期记忆（SQLite + Chroma 两处一起删）。
+
+        记忆存储是全局共享的（各 BYOK 配置的引擎指向同一 SQLite/Chroma），
+        因此任一引擎删除即对全部配置生效；池内没有引擎时临时装配一个执行删除。
+        """
+        for built in list(self._agents.values()):
+            try:
+                if await built.memory.forget(user_id):
+                    return True
+            except Exception:
+                logger.warning("池内 Agent 清理记忆失败，继续尝试", exc_info=True)
+        engine = await build_memory_engine(self._base)
+        service = MemoryService(self._base.memory_scope_id, engine=engine)
+        try:
+            return await service.forget(user_id)
+        finally:
+            await service.close()
+
     async def close(self) -> None:
         """进程退出时调用：等所有后台沉淀、释放共享设施与 SDK 全局资源。"""
         for built in list(self._agents.values()):
@@ -287,8 +338,8 @@ class AgentPool:
         self._agents.clear()
         if self._graph_repo is not None:
             self._graph_repo.close()
+        if self._files is not None:
+            self._files.close()
         if self._store is not None:
             self._store.close()
-        if self._translation_cache is not None:
-            self._translation_cache.close()
         await Runner.resource_mgr.release()
