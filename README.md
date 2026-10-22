@@ -25,8 +25,8 @@ React 前端（`frontend/`，见"启动前端"节）。
 ┌───────────────────────────────┐   ┌──────────────────────────────┐   ┌────────────────────────┐
 │ 鉴权 → 取 user_id             │   │ schemas.py   接口契约        │──▶│ ReActAgent + ReActAgentConfig │
 │ POST /api/chat（/stream SSE） │──▶│ AgentService.handle_chat[_stream]() │──▶│ Runner.run_agent[_streaming] / 上下文引擎 │
-│ 把 evidence_entities 变成     │◀──│ services/    业务编排        │──▶│ @tool 工具能力管理器          │
-│ /api/entities/{id}            │   │ repositories/ 数据访问       │──▶│ 长期记忆引擎 + 向量库         │
+│ 透传 ChatResponse / SSE 事件  │◀──│ services/    业务编排        │──▶│ @tool 工具能力管理器          │
+│                               │   │ repositories/ 数据访问       │──▶│ 长期记忆引擎 + 向量库         │
 └───────────────────────────────┘   │ factory.py    装配工厂        │   └────────────────────────┘
                                     └──────────────────────────────┘
 ```
@@ -67,8 +67,7 @@ frontend/                        React 前端（Vite 构建）
 ├── src/api.js                  JWT 请求封装 + SSE POST 流式解析（BYOK 只存 localStorage）
 ├── src/App.jsx                 登录态管理（令牌失效自动回登录页）
 ├── src/Login.jsx               登录/注册
-├── src/ChatPanel.jsx           三栏主界面：会话列表 + 消息流（流式/工具状态/证据胶囊）
-├── src/GraphView.jsx           Cytoscape 关系子图 + 实体详情卡
+├── src/ChatPanel.jsx           两栏主界面：会话列表 + 消息流（流式/工具状态/证据标签）
 └── src/SettingsModal.jsx       BYOK 模型设置（浏览器侧保存）
 
 examples/                       01_chat / 02_memory / 03_translation
@@ -140,9 +139,9 @@ npm run build      # 生产构建到 frontend/dist（由同源反代或静态服
 ```
 
 - 页面功能：注册/登录（JWT 存 localStorage）、会话列表（新建/切换/删除）、SSE 流式问答
-  （工具调用状态行 + 逐字生成）、证据实体胶囊（点击右侧出详情卡 + Cytoscape 一跳子图）、
-  BYOK 模型设置（仅存浏览器）、清空长期记忆、退出登录。
-- 已实测：注册登录 → 流式问答（约 30s）→ 证据胶囊 → 子图渲染 → 退出重登会话仍在，控制台无报错。
+  （工具调用状态行 + 逐字生成）、证据实体标签展示、BYOK 模型设置（仅存浏览器）、
+  清空长期记忆、退出登录。
+- 已实测：注册登录 → 流式问答（约 30s）→ 证据标签展示 → 退出重登会话仍在，控制台无报错。
 
 ## 安装
 
@@ -318,7 +317,7 @@ await close(built)                               # 进程退出前必须调用�
 2. `user_id` 必须来自鉴权结果，**不得**由前端传入
 3. 用户 LLM key 只经 `ChatRequest.llm` 按请求传入（前端存浏览器侧）；服务端任何模块
    不得把它写入 SQLite / Chroma / 日志 / meta
-4. `evidence_entities` 是前端跳转的唯一依据，不要自行解析回答文本
+4. `evidence_entities` 是前端渲染证据标签的唯一依据，不要自行解析回答文本
 5. 换 PostgreSQL：替换 `ConversationStore` 实现即可（接口不变）；记忆后端若要 PG 需自行写适配器
    （SDK 无 PG 记忆适配器，见构建细节 §8）
 
