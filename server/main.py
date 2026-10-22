@@ -13,7 +13,7 @@
 - POST   /api/chat                            非流式问答
 - POST   /api/chat/stream                     SSE 流式（tool_call/tool_result/delta/done）
 - GET    /api/entities/{entity_key}           实体详情
-- GET    /api/entities/{entity_key}/subgraph  局部子图（Cytoscape 数据源）
+- GET    /api/entities/{entity_key}/subgraph  局部子图
 - DELETE /api/users/me/memory                 清空当前用户长期记忆
 - GET    /api/sessions                        会话列表
 - GET    /api/sessions/{session_id}/messages  会话历史消息
@@ -235,7 +235,7 @@ def entity_subgraph(
     depth: int = Query(default=1, ge=1, le=2),
     limit: int = Query(default=50, ge=1, le=50),
 ) -> GraphResult:
-    """局部子图（Cytoscape.js 数据源）。上限 depth≤2、limit≤50。"""
+    """局部子图。上限 depth≤2、limit≤50。"""
     graph = _pool(request).graph_service()
     graph.begin_round()
     return graph.get_subgraph(entity_key, depth, limit)

@@ -68,11 +68,6 @@ export const api = {
     request(`/api/sessions/${encodeURIComponent(sid)}/messages`, { token }),
   deleteSession: (token, sid) =>
     request(`/api/sessions/${encodeURIComponent(sid)}`, { method: 'DELETE', token }),
-  entity: (token, key) => request(`/api/entities/${encodeURIComponent(key)}`, { token }),
-  subgraph: (token, key, depth = 1, limit = 50) =>
-    request(`/api/entities/${encodeURIComponent(key)}/subgraph?depth=${depth}&limit=${limit}`, {
-      token,
-    }),
   clearMemory: (token) => request('/api/users/me/memory', { method: 'DELETE', token }),
 };
 

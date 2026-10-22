@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import ReactMarkdown from 'react-markdown';
 import { ApiError, api, streamChat } from './api';
-import GraphView from './GraphView';
 
 const TOOL_LABELS = {
   search_entities: '搜索实体',
@@ -12,7 +11,7 @@ const TOOL_LABELS = {
   translate_terms: '翻译术语',
 };
 
-function Message({ m, onPick }) {
+function Message({ m }) {
   return (
     <div className={`msg ${m.role}`}>
       <div className="bubble">
@@ -36,12 +35,12 @@ function Message({ m, onPick }) {
         {m.error && <div className="msg-error">出错了：{m.error}</div>}
         {m.evidence?.length > 0 && (
           <div className="evidence">
-            <div className="evidence-title">证据实体（点击查看图谱）</div>
+            <div className="evidence-title">证据实体</div>
             {m.evidence.map((e) => (
-              <button key={e.entity_key} className="chip" onClick={() => onPick(e.entity_key)}>
+              <span key={e.entity_key} className="chip">
                 {e.name_zh || e.name}
                 <span className="chip-type">{e.entity_type}</span>
-              </button>
+              </span>
             ))}
           </div>
         )}
@@ -57,7 +56,6 @@ export default function ChatPanel({ token, username, llm, onLogout, onOpenSettin
   const [input, setInput] = useState('');
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState('');
-  const [selection, setSelection] = useState(null); // {key, detail, graph}
   const bottomRef = useRef(null);
 
   const handle401 = useCallback(
@@ -95,7 +93,6 @@ export default function ChatPanel({ token, username, llm, onLogout, onOpenSettin
     if (busy || sid === active) return;
     setActive(sid);
     setMessages([]);
-    setSelection(null);
     setNotice('');
     try {
       const d = await api.messages(token, sid);
@@ -109,7 +106,6 @@ export default function ChatPanel({ token, username, llm, onLogout, onOpenSettin
     if (busy) return;
     setActive(crypto.randomUUID());
     setMessages([]);
-    setSelection(null);
     setNotice('');
   }
 
@@ -130,21 +126,6 @@ export default function ChatPanel({ token, username, llm, onLogout, onOpenSettin
       const r = await api.clearMemory(token);
       setNotice(r.ok ? '长期记忆已清空' : '记忆引擎未就绪，未能清空');
     } catch (e) {
-      if (!handle401(e)) setNotice(e.message);
-    }
-  }
-
-  async function inspectEntity(key) {
-    setSelection({ key, detail: null, graph: null });
-    setNotice('');
-    try {
-      const [detail, graph] = await Promise.all([
-        api.entity(token, key),
-        api.subgraph(token, key, 1, 50),
-      ]);
-      setSelection({ key, detail, graph });
-    } catch (e) {
-      setSelection(null);
       if (!handle401(e)) setNotice(e.message);
     }
   }
@@ -187,14 +168,12 @@ export default function ChatPanel({ token, username, llm, onLogout, onOpenSettin
             });
           } else if (event === 'tool_call') {
             patchLast((m) => {
-              m.status = [...(m.status || []), `调用工具：${TOOL_LABELS[data.tool] || data.tool}`];
+              m.status = [...(m.status || []), `调用工具：${TOOL_LABELS[data.name] || data.name}`];
             });
           } else if (event === 'tool_result') {
             patchLast((m) => {
               const s = (m.status || []).slice();
-              if (s.length && typeof data.latency_ms === 'number') {
-                s[s.length - 1] += `（${(data.latency_ms / 1000).toFixed(1)}s）`;
-              }
+              if (s.length) s[s.length - 1] += '，已返回';
               m.status = s;
             });
           } else if (event === 'done') {
@@ -275,7 +254,7 @@ export default function ChatPanel({ token, username, llm, onLogout, onOpenSettin
             </div>
           )}
           {messages.map((m, i) => (
-            <Message key={i} m={m} onPick={inspectEntity} />
+            <Message key={i} m={m} />
           ))}
           <div ref={bottomRef} />
         </div>
@@ -293,17 +272,6 @@ export default function ChatPanel({ token, username, llm, onLogout, onOpenSettin
           </button>
         </div>
       </main>
-
-      <aside className="panel">
-        {selection ? (
-          <GraphView graph={selection.graph} detail={selection.detail} />
-        ) : (
-          <div className="panel-empty">
-            <p>证据图谱</p>
-            <p className="dim">点击回答中的证据实体，这里会显示它的详情与一跳关系子图。</p>
-          </div>
-        )}
-      </aside>
     </div>
   );
 }
