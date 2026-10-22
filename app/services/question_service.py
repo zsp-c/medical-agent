@@ -134,17 +134,21 @@ class QuestionService:
             self._emit_tool("search_questions", "end")
 
     def present_quiz(
-        self, stem: str, options: List[str], subject: str = "", source: str = ""
+        self, stem: str, options: Optional[List[str]] = None, subject: str = "", source: str = ""
     ) -> Dict[str, Any]:
-        """把一道单选题推送给前端展示（答案不下发，用户作答后由你判题讲解）。"""
+        """把一道题推送给前端展示（答案不下发，用户作答后由你判题讲解）。
+
+        有选项即单选题（用户点选提交），无选项即问答题（用户文字作答）。
+        """
         self._emit_tool("present_quiz", "start")
         try:
-            cleaned = [str(o).strip() for o in options if str(o).strip()][:8]
+            cleaned = [str(o).strip() for o in (options or []) if str(o).strip()][:8]
             self._quiz = {
+                "kind": "choice" if cleaned else "open",
                 "stem": (stem or "").strip(),
                 "options": cleaned,
                 "subject": (subject or "").strip(),
-                "source": (source or "question_bank").strip(),
+                "source": (source or "").strip() or "self",
             }
             return {
                 "displayed": True,

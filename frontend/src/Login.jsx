@@ -30,7 +30,7 @@ export default function Login({ onLogin }) {
     <div className="login-wrap">
       <form className="login-card" onSubmit={submit}>
         <h1>医疗知识图谱问答</h1>
-        <p className="login-sub">基于 PrimeKG-Plus 的中文医疗 Agent</p>
+        <p className="login-sub">基于OpenCMKG的中文医疗 Agent</p>
         <label>
           用户名
           <input
