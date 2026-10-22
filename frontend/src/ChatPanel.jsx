@@ -3,18 +3,78 @@ import ReactMarkdown from 'react-markdown';
 import { ApiError, api, streamChat } from './api';
 
 const TOOL_LABELS = {
-  search_entities: '搜索实体',
+  search_entity: '搜索实体',
   get_entity_details: '查实体详情',
-  get_neighbors: '查关联关系',
-  find_path: '找最短路径',
+  query_relations: '查关联关系',
+  find_relation_path: '找关联路径',
   get_subgraph: '提取子图',
-  translate_terms: '翻译术语',
+  search_questions: '检索题库',
+  present_quiz: '出题',
 };
 
-function Message({ m }) {
+// 互动题卡：模型 present_quiz 推送的题目，用户单选后回发作答消息由模型判题
+function QuizCard({ quiz, disabled, onSubmit }) {
+  const [selected, setSelected] = useState(-1);
+  const [submitted, setSubmitted] = useState(false);
+  const options = quiz.options || [];
+
+  function submit() {
+    if (selected < 0 || submitted || disabled) return;
+    setSubmitted(true);
+    const letter = String.fromCharCode(65 + selected);
+    onSubmit(`我选${letter}：${options[selected]}`);
+  }
+
+  return (
+    <div className="quiz-card">
+      <div className="quiz-head">
+        <span className="quiz-tag">随堂测验</span>
+        {quiz.subject && <span className="quiz-subject">{quiz.subject}</span>}
+      </div>
+      <div className="quiz-stem">{quiz.stem}</div>
+      <div className="quiz-options">
+        {options.map((opt, i) => (
+          <button
+            key={i}
+            className={`quiz-option${selected === i ? ' on' : ''}`}
+            disabled={submitted}
+            onClick={() => setSelected(i)}
+          >
+            <span className="quiz-letter">{String.fromCharCode(65 + i)}</span>
+            <span>{opt.replace(/^[A-H][.、．]\s*/, '')}</span>
+          </button>
+        ))}
+      </div>
+      <div className="quiz-foot">
+        {submitted ? (
+          <span className="quiz-done">已提交，等待判题…</span>
+        ) : (
+          <button
+            className="primary"
+            disabled={selected < 0 || disabled}
+            onClick={submit}
+          >
+            提交答案
+          </button>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function Message({ m, quizDisabled, onQuizSubmit }) {
   return (
     <div className={`msg ${m.role}`}>
       <div className="bubble">
+        {m.files?.length > 0 && (
+          <div className="msg-files">
+            {m.files.map((name, i) => (
+              <span key={i} className="msg-file">
+                📎 {name}
+              </span>
+            ))}
+          </div>
+        )}
         {m.status?.length > 0 && (
           <div className="tool-trace">
             {m.status.map((s, i) => (
@@ -33,17 +93,7 @@ function Message({ m }) {
           m.content
         )}
         {m.error && <div className="msg-error">出错了：{m.error}</div>}
-        {m.evidence?.length > 0 && (
-          <div className="evidence">
-            <div className="evidence-title">证据实体</div>
-            {m.evidence.map((e) => (
-              <span key={e.entity_key} className="chip">
-                {e.name_zh || e.name}
-                <span className="chip-type">{e.entity_type}</span>
-              </span>
-            ))}
-          </div>
-        )}
+        {m.quiz && <QuizCard quiz={m.quiz} disabled={quizDisabled} onSubmit={onQuizSubmit} />}
       </div>
     </div>
   );
@@ -56,7 +106,11 @@ export default function ChatPanel({ token, username, llm, onLogout, onOpenSettin
   const [input, setInput] = useState('');
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState('');
+  // 待发送的附件 chip：{key, name, status: uploading/ready/failed, fileId, chars, error}
+  const [files, setFiles] = useState([]);
+  const fileInputRef = useRef(null);
   const bottomRef = useRef(null);
+  const MAX_FILES = 3;
 
   const handle401 = useCallback(
     (e) => {
@@ -130,6 +184,57 @@ export default function ChatPanel({ token, username, llm, onLogout, onOpenSettin
     }
   }
 
+  // ---------- 附件 ----------
+  function patchChip(key, patch) {
+    setFiles((fs) => fs.map((f) => (f.key === key ? { ...f, ...patch } : f)));
+  }
+
+  async function pickFiles(e) {
+    const picked = Array.from(e.target.files || []);
+    e.target.value = ''; // 允许再次选择同一文件
+    if (!picked.length) return;
+    const room = MAX_FILES - files.length;
+    if (picked.length > room) {
+      setNotice(`一条消息最多带 ${MAX_FILES} 个文件`);
+    }
+    const batch = picked.slice(0, room);
+    const chips = batch.map((f) => ({
+      key: crypto.randomUUID(),
+      name: f.name,
+      status: 'uploading',
+      fileId: '',
+      chars: 0,
+      error: '',
+    }));
+    setFiles((fs) => [...fs, ...chips]);
+    try {
+      const d = await api.uploadFiles(token, batch, llm);
+      // 服务端按顺序逐个处理，响应与请求一一对应
+      d.files.forEach((r, i) => {
+        patchChip(chips[i].key, {
+          status: r.status,
+          fileId: r.file_id,
+          chars: r.chars,
+          error: r.error,
+        });
+      });
+    } catch (err) {
+      chips.forEach((c) => patchChip(c.key, { status: 'failed', error: err.message }));
+      handle401(err);
+    }
+  }
+
+  async function removeFile(chip) {
+    setFiles((fs) => fs.filter((f) => f.key !== chip.key));
+    if (chip.fileId) {
+      try {
+        await api.deleteFile(token, chip.fileId);
+      } catch (err) {
+        if (!handle401(err)) setNotice(err.message);
+      }
+    }
+  }
+
   // 只改最后一条消息（流式追加 delta / 工具状态 / done 收尾共用）
   function patchLast(fn) {
     setMessages((ms) => {
@@ -142,16 +247,23 @@ export default function ChatPanel({ token, username, llm, onLogout, onOpenSettin
     });
   }
 
-  async function send() {
-    const query = input.trim();
+  async function send(override) {
+    const query = (typeof override === 'string' ? override : input).trim();
     if (!query || busy) return;
-    setInput('');
+    // 已上传成功且就绪的附件随消息带走；上传中/失败的附件留在 chip 区不进消息
+    const ready = files.filter((f) => f.status === 'ready' && f.fileId);
+    const fileNames = ready.map((f) => f.name);
+    const attachments = ready.map((f) => f.fileId);
+    if (typeof override !== 'string') setInput('');
+    if (attachments.length) {
+      setFiles((fs) => fs.filter((f) => !(f.status === 'ready' && f.fileId)));
+    }
     setBusy(true);
     setNotice('');
     const requestId = crypto.randomUUID();
     setMessages((ms) => [
       ...ms,
-      { role: 'user', content: query },
+      { role: 'user', content: query, files: fileNames },
       { role: 'assistant', content: '', status: [], streaming: true },
     ]);
     try {
@@ -161,6 +273,7 @@ export default function ChatPanel({ token, username, llm, onLogout, onOpenSettin
         query,
         requestId,
         llm,
+        attachments,
         onEvent: ({ event, data }) => {
           if (event === 'delta') {
             patchLast((m) => {
@@ -176,10 +289,13 @@ export default function ChatPanel({ token, username, llm, onLogout, onOpenSettin
               if (s.length) s[s.length - 1] += '，已返回';
               m.status = s;
             });
+          } else if (event === 'quiz') {
+            patchLast((m) => {
+              m.quiz = data;
+            });
           } else if (event === 'done') {
             patchLast((m) => {
               m.content = data.answer || m.content;
-              m.evidence = data.evidence_entities || [];
               m.streaming = false;
             });
           } else if (event === 'error') {
@@ -254,12 +370,49 @@ export default function ChatPanel({ token, username, llm, onLogout, onOpenSettin
             </div>
           )}
           {messages.map((m, i) => (
-            <Message key={i} m={m} />
+            <Message key={i} m={m} quizDisabled={busy} onQuizSubmit={(text) => send(text)} />
           ))}
           <div ref={bottomRef} />
         </div>
         {notice && <div className="notice">{notice}</div>}
+        {files.length > 0 && (
+          <div className="chips">
+            {files.map((f) => (
+              <span
+                key={f.key}
+                className={`chip ${f.status}`}
+                title={f.status === 'failed' ? f.error : f.name}
+              >
+                <span className="chip-name">📎 {f.name}</span>
+                <em className="chip-state">
+                  {f.status === 'uploading' && '解析中…'}
+                  {f.status === 'ready' && `${f.chars} 字`}
+                  {f.status === 'failed' && (f.error || '解析失败')}
+                </em>
+                <button className="chip-x" title="移除" onClick={() => removeFile(f)}>
+                  ×
+                </button>
+              </span>
+            ))}
+          </div>
+        )}
         <div className="composer">
+          <input
+            ref={fileInputRef}
+            type="file"
+            multiple
+            hidden
+            accept=".txt,.md,.docx,.pptx,.png,.jpg,.jpeg,.webp,.gif"
+            onChange={pickFiles}
+          />
+          <button
+            className="icon-attach"
+            title="上传文件（Word/PPT/文本/图片，每条消息最多 3 个）"
+            disabled={busy || files.length >= MAX_FILES}
+            onClick={() => fileInputRef.current?.click()}
+          >
+            📎
+          </button>
           <textarea
             value={input}
             onChange={(e) => setInput(e.target.value)}
@@ -267,7 +420,7 @@ export default function ChatPanel({ token, username, llm, onLogout, onOpenSettin
             placeholder="输入医疗问题，Enter 发送，Shift+Enter 换行"
             rows={2}
           />
-          <button className="primary" disabled={busy || !input.trim()} onClick={send}>
+          <button className="primary" disabled={busy || !input.trim()} onClick={() => send()}>
             {busy ? '生成中…' : '发送'}
           </button>
         </div>

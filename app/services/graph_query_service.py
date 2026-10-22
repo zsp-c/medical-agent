@@ -101,6 +101,8 @@ class GraphQueryService:
         # 每轮请求串行执行（受 LLM 速率限制约束），因此用实例态是安全的。
         self._evidence: List[EntityBrief] = []
         self._seen_keys: set = set()
+        # 轮次序号：工具层据此在每轮开始时重置同轮去重缓存
+        self._round_id: int = 0
         # 工具事件钩子（流式模式用）：hook(tool_name, phase)，phase ∈ {"start", "end"}
         self._tool_hook: Optional[Callable[[str, str], None]] = None
 
@@ -127,9 +129,15 @@ class GraphQueryService:
             self._repo.close()
 
     def begin_round(self) -> None:
-        """每轮对话开始前清空证据收集器。"""
+        """每轮对话开始前清空证据收集器与轮次标记。"""
         self._evidence = []
         self._seen_keys = set()
+        self._round_id += 1
+
+    @property
+    def round_id(self) -> int:
+        """当前轮次序号；工具层用来判断是否该重置同轮去重缓存。"""
+        return self._round_id
 
     @property
     def evidence(self) -> List[EntityBrief]:

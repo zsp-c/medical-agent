@@ -353,33 +353,102 @@ textarea:focus {
   font-size: 13px;
 }
 
-.evidence {
+/* ---------- 互动题卡 ---------- */
+.quiz-card {
   margin-top: 10px;
-  border-top: 1px dashed var(--border);
-  padding-top: 8px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 12px 14px;
+  background: #f8fafc;
+  max-width: 560px;
 }
 
-.evidence-title {
+.quiz-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.quiz-tag {
+  font-size: 11px;
+  font-weight: 600;
+  color: #063a20;
+  background: var(--brand);
+  border-radius: 4px;
+  padding: 2px 7px;
+}
+
+.quiz-subject {
+  font-size: 11.5px;
+  color: var(--muted);
+}
+
+.quiz-stem {
+  font-size: 14px;
+  line-height: 1.7;
+  margin-bottom: 10px;
+  white-space: pre-wrap;
+}
+
+.quiz-options {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.quiz-option {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  text-align: left;
+  padding: 8px 10px;
+  border-radius: 8px;
+  line-height: 1.55;
+  background: var(--panel);
+}
+
+.quiz-option:hover:not(:disabled) {
+  border-color: var(--brand-dark);
+}
+
+.quiz-option.on {
+  border-color: var(--brand);
+  background: #e9fbf2;
+}
+
+.quiz-option:disabled {
+  cursor: default;
+}
+
+.quiz-letter {
+  flex-shrink: 0;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  border: 1px solid var(--border);
+  display: grid;
+  place-items: center;
   font-size: 12px;
   color: var(--muted);
-  margin-bottom: 6px;
 }
 
-.chip {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  margin: 0 6px 6px 0;
-  padding: 4px 10px;
-  border-radius: 999px;
-  border: 1px solid var(--border);
-  background: #f8fafc;
+.quiz-option.on .quiz-letter {
+  border-color: var(--brand-dark);
+  background: var(--brand);
+  color: #063a20;
+  font-weight: 700;
+}
+
+.quiz-foot {
+  margin-top: 10px;
+  display: flex;
+  justify-content: flex-end;
+}
+
+.quiz-done {
   font-size: 12.5px;
-}
-
-.chip-type {
   color: var(--muted);
-  font-size: 11px;
 }
 
 .notice {
@@ -408,6 +477,88 @@ textarea:focus {
 .composer button {
   align-self: flex-end;
   padding: 8px 22px;
+}
+
+.composer .icon-attach {
+  padding: 8px 12px;
+  font-size: 16px;
+}
+
+.composer .icon-attach:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+/* ---------- 附件 chip ---------- */
+.chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 8px 26px 0;
+  background: var(--panel);
+}
+
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 4px 6px 4px 10px;
+  font-size: 12.5px;
+  color: #4a525d;
+  max-width: 340px;
+}
+
+/* 文件名超长时只截断名字本身，状态与关闭按钮始终可见 */
+.chip .chip-name {
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.chip .chip-state {
+  flex-shrink: 0;
+  font-style: normal;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.chip.failed {
+  border-color: #f0c2c0;
+}
+
+.chip.failed .chip-state {
+  color: var(--danger);
+}
+
+.chip .chip-x {
+  flex-shrink: 0;
+  border: none;
+  background: none;
+  color: var(--muted);
+  padding: 0 4px;
+  font-size: 14px;
+}
+
+.chip .chip-x:hover {
+  color: var(--danger);
+}
+
+/* 用户气泡里已发送的附件名 */
+.msg-files {
+  margin-bottom: 6px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.msg-file {
+  font-size: 12px;
+  background: rgba(255, 255, 255, 0.45);
+  border-radius: 6px;
+  padding: 2px 8px;
 }
 
 /* ---------- 设置弹窗 ---------- */

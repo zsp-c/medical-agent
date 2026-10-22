@@ -12,6 +12,9 @@
 - GET    /api/auth/me                         当前用户信息
 - POST   /api/chat                            非流式问答
 - POST   /api/chat/stream                     SSE 流式（tool_call/tool_result/delta/done）
+- POST   /api/files                           上传并解析文件（multipart，返回解析状态）
+- GET    /api/files                           当前用户文件列表
+- DELETE /api/files/{file_id}                 删除文件（磁盘与数据行一起清）
 - GET    /api/entities/{entity_key}           实体详情
 - GET    /api/entities/{entity_key}/subgraph  局部子图
 - DELETE /api/users/me/memory                 清空当前用户长期记忆
@@ -29,9 +32,19 @@ import json
 import logging
 import uuid
 from contextlib import asynccontextmanager, suppress
-from typing import Annotated, Any, AsyncIterator, Dict, Optional
+from typing import Annotated, Any, AsyncIterator, Dict, List, Optional
 
-from fastapi import APIRouter, Depends, FastAPI, HTTPException, Query, Request
+from fastapi import (
+    APIRouter,
+    Depends,
+    FastAPI,
+    File,
+    Form,
+    HTTPException,
+    Query,
+    Request,
+    UploadFile,
+)
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
@@ -39,6 +52,7 @@ from pydantic import BaseModel, Field
 from app.factory import AgentPool
 from app.schemas import ChatRequest, ChatResponse, GraphResult, LLMConfig
 from app.services import SessionOwnershipError
+from app.services.file_service import UploadRejectedError
 from app.settings import Settings
 from server.auth import create_access_token, current_user
 from server.config import ServerConfig
@@ -59,6 +73,7 @@ class ChatBody(BaseModel):
     query: str
     request_id: str = ""
     llm: Optional[LLMConfig] = None
+    attachments: List[str] = Field(default_factory=list)
     options: Dict[str, Any] = Field(default_factory=dict)
 
     def to_chat_request(self, user_id: str) -> ChatRequest:
@@ -69,6 +84,7 @@ class ChatBody(BaseModel):
             query=self.query,
             request_id=self.request_id or str(uuid.uuid4()),
             llm=self.llm,
+            attachments=self.attachments,
             options=self.options,
         )
 
@@ -219,6 +235,67 @@ async def chat_stream(body: ChatBody, user: CurrentUser, request: Request) -> St
     )
 
 
+# --------------------------------------------------------------------------- #
+# 上传文件：multipart 上传 → 落盘 + 解析成纯文本入库；发消息时按 file_id 注入对话
+# --------------------------------------------------------------------------- #
+@router.post("/files", status_code=201)
+async def upload_files(
+    user: CurrentUser,
+    request: Request,
+    files: List[UploadFile] = File(...),
+    llm: Optional[str] = Form(default=None),
+) -> Dict[str, Any]:
+    """上传并解析文件（每个文件独立返回解析状态，失败的文件不影响其他文件）。
+
+    - 单次最多 upload_max_files 个、每个 ≤ upload_max_mb（超出 400，文案可读）
+    - `llm` 为可选表单字段（JSON 字符串）：图片 caption 用的视觉模型配置，
+      仅本次请求内存使用，不持久化；缺省用服务端默认模型
+    """
+    settings: Settings = request.app.state.settings
+    if len(files) > settings.upload_max_files:
+        raise HTTPException(
+            status_code=400,
+            detail=f"一次最多上传 {settings.upload_max_files} 个文件",
+        )
+    llm_cfg: Optional[LLMConfig] = None
+    if llm:
+        try:
+            llm_cfg = LLMConfig.model_validate_json(llm)
+        except ValueError:
+            raise HTTPException(status_code=400, detail="llm 字段不是合法的模型配置 JSON")
+    service = _pool(request).file_service()
+    results = []
+    for upload in files:
+        data = await upload.read()
+        try:
+            results.append(
+                await service.ingest(user, upload.filename or "file", data, llm_cfg)
+            )
+        except UploadRejectedError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        except Exception as exc:
+            logger.warning("文件上传失败", exc_info=True)
+            raise HTTPException(status_code=500, detail="文件保存失败，请稍后重试") from exc
+    return {"files": results}
+
+
+@router.get("/files")
+def list_files(user: CurrentUser, request: Request) -> Dict[str, Any]:
+    """当前用户的文件列表（新→旧，不含正文）。"""
+    return {"files": _pool(request).file_service().list_files(user)}
+
+
+@router.delete("/files/{file_id}")
+def delete_file(file_id: str, user: CurrentUser, request: Request) -> Dict[str, bool]:
+    """删除文件：磁盘目录与数据行一起清。他人文件 403。"""
+    result = _pool(request).file_service().delete_file(user, file_id)
+    if result is None:
+        raise HTTPException(status_code=404, detail="文件不存在")
+    if result is False:
+        raise HTTPException(status_code=403, detail="无权访问该文件")
+    return {"ok": True}
+
+
 @router.get("/entities/{entity_key}")
 def entity_details(entity_key: str, user: CurrentUser, request: Request) -> Dict[str, Any]:
     """实体详情。found=false 表示键不存在（200 直通，保持 schema 一致）。"""
@@ -320,6 +397,7 @@ def create_app(
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         app.state.pool = AgentPool(settings)
+        app.state.settings = settings
         app.state.server_config = config
         app.state.user_store = UserStore(config.user_db_path)
         logger.info(

@@ -25,6 +25,9 @@ dependencies = [
     "uvicorn>=0.29",
     # 用户体系：JWT 签发/校验（口令哈希用 stdlib PBKDF2，零依赖）
     "PyJWT>=2.8",
+    # 上传文件解析：Word / PPT 提取纯文本（图片走视觉模型 caption，无额外依赖）
+    "python-docx>=1.1",
+    "python-pptx>=1.0",
 ]
 
 [build-system]

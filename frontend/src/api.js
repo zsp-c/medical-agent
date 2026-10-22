@@ -69,11 +69,25 @@ export const api = {
   deleteSession: (token, sid) =>
     request(`/api/sessions/${encodeURIComponent(sid)}`, { method: 'DELETE', token }),
   clearMemory: (token) => request('/api/users/me/memory', { method: 'DELETE', token }),
+  listFiles: (token) => request('/api/files', { token }),
+  deleteFile: (token, fid) =>
+    request(`/api/files/${encodeURIComponent(fid)}`, { method: 'DELETE', token }),
+  // multipart 上传：不能走 request()（它会强行设 JSON Content-Type，boundary 会丢）
+  uploadFiles: async (token, files, llm) => {
+    const fd = new FormData();
+    for (const f of files) fd.append('files', f);
+    if (llm) fd.append('llm', JSON.stringify(llm));
+    const headers = {};
+    if (token) headers.Authorization = `Bearer ${token}`;
+    const res = await fetch('/api/files', { method: 'POST', headers, body: fd });
+    if (!res.ok) throw await parseError(res);
+    return res.json();
+  },
 };
 
 // SSE：POST /api/chat/stream，逐事件回调。
 // 事件：tool_call / tool_result / delta / done / error；': ping' 心跳注释行自动忽略。
-export async function streamChat({ token, sessionId, query, requestId, llm, onEvent, signal }) {
+export async function streamChat({ token, sessionId, query, requestId, llm, attachments, onEvent, signal }) {
   const headers = { 'Content-Type': 'application/json' };
   if (token) headers.Authorization = `Bearer ${token}`;
   const res = await fetch('/api/chat/stream', {
@@ -85,6 +99,7 @@ export async function streamChat({ token, sessionId, query, requestId, llm, onEv
       query,
       request_id: requestId,
       ...(llm ? { llm } : {}),
+      ...(attachments && attachments.length ? { attachments } : {}),
     }),
   });
   if (!res.ok) throw await parseError(res);
