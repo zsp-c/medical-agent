@@ -350,6 +350,10 @@ export default function ChatPanel({ token, username, llm, onLogout, onOpenSettin
   return (
     <div className="layout">
       <aside className="sidebar">
+        <div className="brand">
+          <img className="brand-crest" src="/school-crest.png" alt="校徽" />
+          <span className="brand-name">医疗知识图谱问答</span>
+        </div>
         <div className="side-head">
           <span>会话</span>
           <button className="icon-btn" title="新建会话" onClick={newSession}>
@@ -377,6 +381,9 @@ export default function ChatPanel({ token, username, llm, onLogout, onOpenSettin
           <button onClick={onOpenSettings}>模型设置{llm ? '（自定义）' : '（默认）'}</button>
           <button onClick={clearMemory}>清空长期记忆</button>
           <button onClick={onLogout}>退出登录</button>
+          <div className="side-mark">
+            <img src="/college-crest.png" alt="院徽" />
+          </div>
         </div>
       </aside>
 

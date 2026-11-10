@@ -29,8 +29,13 @@ export default function Login({ onLogin }) {
   return (
     <div className="login-wrap">
       <form className="login-card" onSubmit={submit}>
-        <h1>医疗知识图谱问答</h1>
-        <p className="login-sub">基于OpenCMKG的中文医疗 Agent</p>
+        <div className="login-brand">
+          <img src="/school-crest.png" alt="校徽" />
+          <div>
+            <h1>医疗知识图谱问答</h1>
+            <p className="login-sub">基于OpenCMKG的中文医疗 Agent</p>
+          </div>
+        </div>
         <label>
           用户名
           <input
@@ -66,6 +71,9 @@ export default function Login({ onLogin }) {
         >
           {mode === 'login' ? '没有账号？注册一个' : '已有账号？去登录'}
         </button>
+        <div className="login-foot">
+          <img src="/college-crest.png" alt="院徽" />
+        </div>
       </form>
     </div>
   );

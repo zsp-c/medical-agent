@@ -111,6 +111,35 @@ textarea:focus {
   margin: 0;
 }
 
+.login-brand {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.login-brand img {
+  width: 42px;
+  height: 42px;
+  flex-shrink: 0;
+}
+
+.login-brand .login-sub {
+  margin: 3px 0 0;
+}
+
+.login-foot {
+  display: flex;
+  justify-content: center;
+  padding-top: 12px;
+  border-top: 1px solid var(--border);
+}
+
+.login-foot img {
+  width: 30px;
+  height: 30px;
+  opacity: 0.9;
+}
+
 .login-sub {
   margin: 0 0 6px;
   color: var(--muted);
@@ -145,11 +174,29 @@ textarea:focus {
   min-height: 0;
 }
 
+.brand {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 14px 14px 0;
+}
+
+.brand-crest {
+  width: 26px;
+  height: 26px;
+  flex-shrink: 0;
+}
+
+.brand-name {
+  font-size: 13.5px;
+  font-weight: 600;
+}
+
 .side-head {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  padding: 14px 14px 8px;
+  padding: 10px 14px 8px;
   font-weight: 600;
 }
 
@@ -214,6 +261,18 @@ textarea:focus {
   display: flex;
   flex-direction: column;
   gap: 8px;
+}
+
+.side-mark {
+  display: flex;
+  justify-content: center;
+  padding-top: 4px;
+}
+
+.side-mark img {
+  width: 26px;
+  height: 26px;
+  opacity: 0.8;
 }
 
 .user-row {
