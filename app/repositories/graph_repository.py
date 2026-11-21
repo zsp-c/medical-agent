@@ -174,6 +174,10 @@ class GraphRepository(ABC):
         self, entity_key: str, depth: int, node_limit: int
     ) -> Dict[str, Any]: ...
 
+    def stats(self) -> Dict[str, int]:
+        """全图规模（登录页与侧栏的「图谱在线」标签用）；默认不统计。"""
+        return {"nodes": 0, "edges": 0}
+
     def close(self) -> None:  # pragma: no cover
         return None
 
@@ -196,6 +200,17 @@ class Neo4jGraphRepository(GraphRepository):
             return True
         except Exception:
             return False
+
+    def stats(self) -> Dict[str, int]:
+        try:
+            nodes = self._run("MATCH (n:Entity) RETURN count(n) AS c")
+            edges = self._run("MATCH ()-[r:RELATED_TO]->() RETURN count(r) AS c")
+            return {
+                "nodes": int(nodes[0]["c"]) if nodes else 0,
+                "edges": int(edges[0]["c"]) if edges else 0,
+            }
+        except Exception:
+            return {"nodes": 0, "edges": 0}
 
     def _run(self, cypher: str, **params: Any) -> List[Dict[str, Any]]:
         with self._driver.session(database=self._database) as session:
@@ -377,6 +392,9 @@ class SampleGraphRepository(GraphRepository):
     def ping(self) -> bool:
         return bool(self._entities)
 
+    def stats(self) -> Dict[str, int]:
+        return {"nodes": len(self._entities), "edges": len(self._edges)}
+
     def _brief(self, entity: Dict[str, Any]) -> Dict[str, Any]:
         return {
             "entity_key": entity["entity_key"],
@@ -507,7 +525,10 @@ class SampleGraphRepository(GraphRepository):
             frontier = nxt
             if len(collected) >= node_limit:
                 break
-        keys = list(collected)[:node_limit]
+        # 中心实体必须留在结果里：set 迭代无序，直接截断可能把中心点截掉，
+        # 导致返回的边集合为空（画不出子图）
+        keys = [entity_key] + [k for k in collected if k != entity_key]
+        keys = keys[: max(1, int(node_limit))]
         key_set = set(keys)
         nodes = [self._brief(self._entities[k]) for k in keys]
         edges = [

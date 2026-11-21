@@ -64,6 +64,7 @@ class AgentService:
         questions: Optional[Any] = None,
         files: Optional[Any] = None,
         metrics: Optional[Any] = None,
+        practice: Optional[Any] = None,
     ) -> None:
         self._agent = agent
         self._context = context
@@ -75,6 +76,8 @@ class AgentService:
         self._files = files
         # 分阶段耗时/token 采集器（缺省时只保留总耗时）
         self._metrics = metrics
+        # 练习中心（题卡登记 / 作答统计）；缺省时题卡仍可显示，但不计入统计
+        self._practice = practice
         # 后台沉淀的任务与串行锁：同一 (user_id, session_id) 不允许并发写记忆
         self._bg_tasks: set[asyncio.Task] = set()
         self._bg_keys: Dict[asyncio.Task, str] = {}
@@ -85,6 +88,53 @@ class AgentService:
         if self._files is None or not req.attachments:
             return []
         return self._files.load_texts(req.user_id, req.attachments)
+
+    def _publish_quiz(self, req: ChatRequest) -> Optional[Dict[str, Any]]:
+        """取出本轮题卡 → 登记到练习中心 → 返回**不含标准答案**的下发载荷。
+
+        标准答案留在服务端（PracticeService），前端拿到的只有 `quiz_id`：
+        提交作答时用它换判题结果，因此答案永远不会出现在网络响应或历史消息里。
+        """
+        if self._questions is None:
+            return None
+        quiz = self._questions.pop_quiz()
+        if not quiz:
+            return None
+        if self._practice is not None:
+            return self._practice.register_quiz(req.user_id, req.session_id, quiz)
+        return {
+            "quiz_id": "",
+            "kind": quiz.get("kind") or "choice",
+            "stem": quiz.get("stem", ""),
+            "options": quiz.get("options") or [],
+            "subject": quiz.get("subject", ""),
+            "source": quiz.get("source", ""),
+        }
+
+    @staticmethod
+    def _archived_meta(
+        quiz: Optional[Dict[str, Any]],
+        evidence: Sequence[EntityBrief],
+        meta: Dict[str, Any],
+    ) -> Dict[str, Any]:
+        """assistant 消息归档的附加信息：题卡 + 证据 + 本轮统计。
+
+        只放前端还原界面需要的字段；标准答案在 PracticeService，绝不进消息。
+        """
+        timing = meta.get("timing") or {}
+        return {
+            "quiz": quiz,
+            "evidence": [item.model_dump() for item in evidence],
+            "stats": {
+                "elapsed_ms": meta.get("elapsed_ms"),
+                "graph_backend": meta.get("graph_backend"),
+                "memory_used": meta.get("memory_used", 0),
+                "model_calls": timing.get("model_call_count", 0),
+                "tool_calls": len(timing.get("tool_calls") or []),
+                "tokens": (timing.get("prompt_tokens_total") or 0)
+                + (timing.get("completion_tokens_total") or 0),
+            },
+        }
 
     # ---- 分阶段耗时/token -------------------------------------------------
 
@@ -157,10 +207,8 @@ class AgentService:
         answer = extract_text(result)
         evidence: List[EntityBrief] = self._graph.evidence
 
-        # 5 写回消息（request_id 相同则幂等跳过）
-        written = self._context.append_turn(
-            req.user_id, req.session_id, req.query, answer, req.request_id
-        )
+        # 5 写回消息（request_id 相同则幂等跳过）；题卡随消息归档，刷新后仍可回放
+        quiz = self._publish_quiz(req)
 
         # 6 沉淀长期记忆：排进后台任务，响应不再等它（失败只记日志，不回滚已写入的消息）
         # 只沉淀本轮新消息：记忆引擎内部自己有消息归档（gen_mem_with_history_msg_num），
@@ -184,17 +232,25 @@ class AgentService:
             # 沉淀在响应之后异步进行，故这里只报告是否已排入后台，不报告结果
             "memory_scheduled": memory_scheduled,
             "history_count": len(recent),
-            "messages_written": written,
             "files_used": len(file_blocks),
             "elapsed_ms": round((time.perf_counter() - started) * 1000),
         }
         meta["timing"] = self._timing_meta(context_ms, memory_ms, runner_ms)
         self._log_timing(req, meta)
+
+        # 归档：把题卡、证据与统计写进 assistant 消息 meta，刷新后界面可完整还原
+        written = self._context.append_turn(
+            req.user_id,
+            req.session_id,
+            req.query,
+            answer,
+            req.request_id,
+            assistant_meta=self._archived_meta(quiz, evidence, meta),
+        )
+        meta["messages_written"] = written
         # 本轮若调用了 present_quiz，把题卡随响应带回（前端据此渲染互动题卡）
-        if self._questions is not None:
-            quiz = self._questions.pop_quiz()
-            if quiz:
-                meta["quiz"] = quiz
+        if quiz:
+            meta["quiz"] = quiz
         return ChatResponse(
             answer=answer,
             request_id=req.request_id,
@@ -259,6 +315,7 @@ class AgentService:
             self._questions.set_tool_hook(tool_hook)
         task = asyncio.create_task(_pump())
         parts: List[str] = []
+        quiz: Optional[Dict[str, Any]] = None
         try:
             while True:
                 kind, payload = await queue.get()
@@ -273,14 +330,11 @@ class AgentService:
                         "name": name,
                     }
                     # present_quiz 结束即把题卡推给前端（答案不下发，用户作答后由模型判题）
-                    if (
-                        name == "present_quiz"
-                        and phase == "end"
-                        and self._questions is not None
-                    ):
-                        quiz = self._questions.pop_quiz()
-                        if quiz:
-                            yield {"event": "quiz", **quiz}
+                    if name == "present_quiz" and phase == "end":
+                        published = self._publish_quiz(req)
+                        if published:
+                            quiz = published
+                            yield {"event": "quiz", **published}
                     continue
                 ctype = getattr(payload, "type", "")
                 cpayload = getattr(payload, "payload", None) or {}
@@ -299,10 +353,7 @@ class AgentService:
         answer = "".join(parts)
         evidence: List[EntityBrief] = self._graph.evidence
 
-        # 5~6 与非流式一致：写回（幂等）→ 后台沉淀
-        written = self._context.append_turn(
-            req.user_id, req.session_id, req.query, answer, req.request_id
-        )
+        # 5~6 与非流式一致：先算 meta（归档要用），写回（幂等）→ 后台沉淀
         turn_messages = [
             Message(session_id=req.session_id, user_id=req.user_id, role="user", content=req.query),
             Message(session_id=req.session_id, user_id=req.user_id, role="assistant", content=answer),
@@ -315,12 +366,22 @@ class AgentService:
             "memory_used": len(hits),
             "memory_scheduled": memory_scheduled,
             "history_count": len(recent),
-            "messages_written": written,
             "files_used": len(file_blocks),
             "elapsed_ms": round((time.perf_counter() - started) * 1000),
         }
         meta["timing"] = self._timing_meta(context_ms, memory_ms, runner_ms)
         self._log_timing(req, meta)
+        written = self._context.append_turn(
+            req.user_id,
+            req.session_id,
+            req.query,
+            answer,
+            req.request_id,
+            assistant_meta=self._archived_meta(quiz, evidence, meta),
+        )
+        meta["messages_written"] = written
+        if quiz:
+            meta["quiz"] = quiz
         yield {
             "event": "done",
             "response": ChatResponse(

@@ -13,6 +13,7 @@ import asyncio
 import hashlib
 import logging
 from collections import OrderedDict
+from contextlib import suppress
 from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any, AsyncIterator, Dict, Optional, Sequence
@@ -43,6 +44,7 @@ from app.services.graph_query_service import (
     build_graph_repository,
 )
 from app.services.memory_service import MemoryEngine, MemoryService
+from app.services.practice_service import PracticeService
 from app.services.question_service import QuestionService
 from app.settings import Settings, build_react_config, quiet_logs
 from app.throttle import RateGate
@@ -78,6 +80,7 @@ class BuiltAgent:
     context: ContextService
     memory: MemoryService
     files: FileService
+    practice: PracticeService
     service: AgentService
 
 
@@ -88,6 +91,7 @@ async def build_agent(
     memory_engine: Optional[MemoryEngine] = None,
     graph_repo: Optional[GraphRepository] = None,
     files: Optional[FileService] = None,
+    practice: Optional[PracticeService] = None,
     enable_memory: bool = True,
     extra_tools: Sequence[LocalFunction] = (),
 ) -> BuiltAgent:
@@ -100,6 +104,7 @@ async def build_agent(
         graph_repo: 共享图谱仓储（BYOK 池注入，Agent 池共用一个 Neo4j 连接）；
             传入后本 Agent 的 GraphQueryService 不负责释放它
         files: 共享上传文件服务（BYOK 池注入）；缺省按 settings 自建
+        practice: 共享练习中心（题卡登记 / 统计）；缺省按 settings 自建
         enable_memory: 置 False 则完全不装记忆（`MemoryService` 自动降级为无记忆）
         extra_tools: 额外工具
     """
@@ -156,6 +161,7 @@ async def build_agent(
         timeout_seconds=settings.memory_retrieve_timeout,
     )
     files = files or FileService(settings)
+    practice = practice or PracticeService(settings)
 
     return BuiltAgent(
         agent=agent,
@@ -166,7 +172,10 @@ async def build_agent(
         context=context,
         memory=memory,
         files=files,
-        service=AgentService(agent, context, graph, memory, questions, files, metrics),
+        practice=practice,
+        service=AgentService(
+            agent, context, graph, memory, questions, files, metrics, practice
+        ),
     )
 
 
@@ -183,6 +192,7 @@ async def close(built: Optional[BuiltAgent] = None) -> None:
         built.questions.close()
         built.store.close()
         built.files.close()
+        built.practice.close()
         await built.memory.close()
     await Runner.resource_mgr.release()
 
@@ -215,6 +225,8 @@ class AgentPool:
         self._graph_repo: Optional[GraphRepository] = None
         self._graph_service: Optional[GraphQueryService] = None
         self._files: Optional[FileService] = None
+        self._practice: Optional[PracticeService] = None
+        self._questions: Optional[QuestionService] = None
 
     # ---- 缓存键：只留哈希，不留 key 本体 ----
     @staticmethod
@@ -229,6 +241,7 @@ class AgentPool:
             self._store = SqliteConversationStore(self._base.sqlite_path)
             self._graph_repo = build_graph_repository(self._base)
             self._files = FileService(self._base)
+            self._practice = PracticeService(self._base)
 
     async def _get(self, llm: Optional[LLMConfig]) -> BuiltAgent:
         key = self._cache_key(llm)
@@ -253,6 +266,7 @@ class AgentPool:
                         store=self._store,
                         graph_repo=self._graph_repo,
                         files=self._files,
+                        practice=self._practice,
                     )
                 self._agents[key] = built
                 if len(self._agents) > self._max_size:
@@ -296,6 +310,27 @@ class AgentPool:
             self._graph_service = GraphQueryService(self._base, repo=self._graph_repo)
         return self._graph_service
 
+    async def refresh_graph(self) -> Dict[str, Any]:
+        """重建图谱连接，返回新的后端状态。
+
+        场景：Neo4j 比后端晚启动（或中途重启过）。共享仓储被已装配的 Agent 引用着，
+        换仓储必须一并清空装配缓存；Agent 只是装配产物，会话与长期记忆都在持久层，
+        下一次请求按原配置重建即可，不会丢数据。
+        """
+        async with self._build_lock:
+            for built in list(self._agents.values()):
+                with suppress(Exception):
+                    await built.service.drain_background()
+                with suppress(Exception):
+                    await built.memory.close()
+            self._agents.clear()
+            if self._graph_repo is not None:
+                with suppress(Exception):
+                    self._graph_repo.close()
+            self._graph_repo = build_graph_repository(self._base)
+            self._graph_service = None
+        return self.graph_service().stats()
+
     def conversation_store(self) -> ConversationStore:
         """共享会话存储：会话列表 / 历史消息 / 删除会话等 HTTP 接口用。"""
         self._ensure_shared()
@@ -307,6 +342,19 @@ class AgentPool:
         self._ensure_shared()
         assert self._files is not None
         return self._files
+
+    def practice_service(self) -> PracticeService:
+        """共享练习中心：作答提交 / 答题统计等 HTTP 接口用。"""
+        self._ensure_shared()
+        assert self._practice is not None
+        return self._practice
+
+    def question_service(self) -> QuestionService:
+        """共享题库服务：练习中心随机组卷用（Chroma 集合只读，可安全共享）。"""
+        self._ensure_shared()
+        if self._questions is None:
+            self._questions = QuestionService(self._base)
+        return self._questions
 
     async def forget_memory(self, user_id: str) -> bool:
         """按 user_id 清空长期记忆（SQLite + Chroma 两处一起删）。
@@ -340,6 +388,8 @@ class AgentPool:
             self._graph_repo.close()
         if self._files is not None:
             self._files.close()
+        if self._practice is not None:
+            self._practice.close()
         if self._store is not None:
             self._store.close()
         await Runner.resource_mgr.release()

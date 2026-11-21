@@ -45,6 +45,8 @@ uploaded_files = Table(
     metadata,
     Column("file_id", String(36), primary_key=True),
     Column("user_id", String(128), nullable=False, index=True),
+    # 归属会话（附件页按会话筛选；发消息时只认 file_id，不影响对话链路）
+    Column("session_id", String(64), nullable=False, default=""),
     Column("name", String(256), nullable=False),
     Column("ext", String(16), nullable=False),
     Column("size", Integer, nullable=False),
@@ -72,8 +74,26 @@ class FileService:
         self._upload_root = Path(settings.upload_dir)
         self._engine = create_engine(f"sqlite:///{settings.sqlite_path}")
         metadata.create_all(self._engine)
+        self._migrate()
         # 图片 caption 也计 LLM 请求，与全项目同一套 RPM 滑动窗口策略
         self._gate = RateGate(settings.llm_rpm_limit)
+
+    def _migrate(self) -> None:
+        """给老库补 `session_id` 列（create_all 不会改已存在的表）。"""
+        if not str(self._engine.url).startswith("sqlite"):
+            return
+        try:
+            with self._engine.begin() as conn:
+                cols = {
+                    row[1]
+                    for row in conn.exec_driver_sql("PRAGMA table_info(uploaded_file)")
+                }
+                if cols and "session_id" not in cols:
+                    conn.exec_driver_sql(
+                        "ALTER TABLE uploaded_file ADD COLUMN session_id VARCHAR NOT NULL DEFAULT ''"
+                    )
+        except Exception:  # 迁移失败不阻断启动：老数据按"无归属会话"处理
+            pass
 
     # ------------------------------------------------------------------ #
     # 上传 + 解析
@@ -84,6 +104,7 @@ class FileService:
         name: str,
         data: bytes,
         llm: Optional[LLMConfig] = None,
+        session_id: str = "",
     ) -> Dict[str, Any]:
         """落盘 → 解析 → 入库，返回文件记录（含 status，供前端展示解析结果）。
 
@@ -127,6 +148,7 @@ class FileService:
         record = {
             "file_id": file_id,
             "user_id": user_id,
+            "session_id": (session_id or "")[:64],
             "name": safe_name,
             "ext": ext,
             "size": len(data),
@@ -175,13 +197,17 @@ class FileService:
     # ------------------------------------------------------------------ #
     # 查询 / 删除
     # ------------------------------------------------------------------ #
-    def list_files(self, user_id: str) -> List[Dict[str, Any]]:
-        """当前用户的文件列表（新→旧），不含正文。"""
+    def list_files(self, user_id: str, session_id: Optional[str] = None) -> List[Dict[str, Any]]:
+        """当前用户的文件列表（新→旧），不含正文。
+
+        `session_id` 非空时只返回该会话下上传的附件（附件页按会话筛选）。
+        """
+        stmt = select(uploaded_files).where(uploaded_files.c.user_id == user_id)
+        if session_id:
+            stmt = stmt.where(uploaded_files.c.session_id == session_id)
         with self._engine.begin() as conn:
             rows = conn.execute(
-                select(uploaded_files)
-                .where(uploaded_files.c.user_id == user_id)
-                .order_by(uploaded_files.c.created_at.desc())
+                stmt.order_by(uploaded_files.c.created_at.desc())
             ).mappings()
         return [self._public(dict(r)) for r in rows]
 

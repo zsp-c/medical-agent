@@ -10,7 +10,7 @@
 我们再把历史文本塞进 query 只会造成重复注入。因此本服务只做"存档 + 供料"。
 """
 
-from typing import List, Optional
+from typing import Any, Dict, List, Optional
 
 from app.repositories.conversation_store import ConversationStore
 from app.schemas import Message
@@ -48,8 +48,13 @@ class ContextService:
         query: str,
         answer: str,
         request_id: str = "",
+        assistant_meta: Optional[Dict[str, Any]] = None,
     ) -> int:
-        """写回一轮对话（用户消息 + 助手回答）。request_id 相同则幂等跳过。"""
+        """写回一轮对话（用户消息 + 助手回答）。request_id 相同则幂等跳过。
+
+        `assistant_meta` 只用于前端还原界面（例如本轮推送的互动题卡），
+        不参与模型上下文；题卡里的标准答案在 PracticeService，绝不写进消息。
+        """
         items = [
             Message(
                 session_id=session_id,
@@ -64,6 +69,7 @@ class ContextService:
                 role="assistant",
                 content=answer,
                 request_id=request_id,
+                meta=dict(assistant_meta or {}),
             ),
         ]
         return self._store.append(items)

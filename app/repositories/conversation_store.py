@@ -10,8 +10,9 @@
 """
 
 from abc import ABC, abstractmethod
+import json
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Any, Dict, List, Optional
 
 from sqlalchemy import (
     Column,
@@ -50,7 +51,30 @@ messages = Table(
     Column("content", String, nullable=False),
     Column("request_id", String(64), nullable=False, default="", index=True),
     Column("created_at", String(40), nullable=False),
+    # 前端还原界面用的附加信息（JSON 文本，如 {"quiz": {...}}）；不参与模型上下文
+    Column("meta", String, nullable=False, default=""),
 )
+
+TITLE_MAX_CHARS = 30  # 会话标题取首条用户提问的前 30 字
+
+
+def _load_meta(raw: Optional[str]) -> Dict[str, Any]:
+    """库里存的 meta 是 JSON 文本；坏数据按空处理，不影响历史回放。"""
+    if not raw:
+        return {}
+    try:
+        value = json.loads(raw)
+    except (TypeError, ValueError):
+        return {}
+    return value if isinstance(value, dict) else {}
+
+
+def _title(raw: Optional[str]) -> str:
+    """首条提问 → 单行标题；空会话给一个可读的占位。"""
+    text = " ".join((raw or "").split())
+    if not text:
+        return "新对话"
+    return text[:TITLE_MAX_CHARS] + ("…" if len(text) > TITLE_MAX_CHARS else "")
 
 
 class SessionOwnershipError(RuntimeError):
@@ -87,8 +111,8 @@ class ConversationStore(ABC):
         """只读查询会话归属；不存在返回 None（不像 ensure_session 会登记新会话）。"""
         raise NotImplementedError
 
-    def list_sessions(self, user_id: str, limit: int = 50, offset: int = 0) -> List[Dict[str, str]]:
-        """该用户的会话列表，按 updated_at 倒序分页。"""
+    def list_sessions(self, user_id: str, limit: int = 50, offset: int = 0) -> List[Dict[str, Any]]:
+        """该用户的会话列表，按 updated_at 倒序分页（含标题与消息条数）。"""
         raise NotImplementedError
 
     def count_sessions(self, user_id: str) -> int:
@@ -123,6 +147,21 @@ class SqliteConversationStore(ConversationStore):
 
     def init_schema(self) -> None:
         metadata.create_all(self._engine)
+        self._migrate()
+
+    def _migrate(self) -> None:
+        """给老库补 `messages.meta` 列（create_all 不会改已存在的表）。"""
+        if not str(self._engine.url).startswith("sqlite"):
+            return
+        try:
+            with self._engine.begin() as conn:
+                cols = {row[1] for row in conn.exec_driver_sql("PRAGMA table_info(messages)")}
+                if cols and "meta" not in cols:
+                    conn.exec_driver_sql(
+                        "ALTER TABLE messages ADD COLUMN meta VARCHAR NOT NULL DEFAULT ''"
+                    )
+        except Exception:  # 迁移失败不阻断启动：老库照常可读（meta 视作空）
+            pass
 
     def ensure_session(self, session_id: str, user_id: str) -> None:
         with self._engine.begin() as conn:
@@ -170,6 +209,7 @@ class SqliteConversationStore(ConversationStore):
                 content=r.content,
                 request_id=r.request_id,
                 created_at=r.created_at,
+                meta=_load_meta(r.meta),
             )
             for r in reversed(rows)
         ]
@@ -181,11 +221,14 @@ class SqliteConversationStore(ConversationStore):
         request_id = items[0].request_id
         if request_id and self.exists_request(request_id):
             return 0
+        payload = []
+        for item in items:
+            row = item.model_dump()
+            meta = row.pop("meta", None)
+            row["meta"] = json.dumps(meta, ensure_ascii=False) if meta else ""
+            payload.append(row)
         with self._engine.begin() as conn:
-            conn.execute(
-                insert(messages),
-                [item.model_dump() for item in items],
-            )
+            conn.execute(insert(messages), payload)
         return len(items)
 
     def exists_request(self, request_id: str) -> bool:
@@ -215,12 +258,37 @@ class SqliteConversationStore(ConversationStore):
             ).first()
         return None if row is None else row.user_id
 
-    def list_sessions(self, user_id: str, limit: int = 50, offset: int = 0) -> List[Dict[str, str]]:
+    def list_sessions(self, user_id: str, limit: int = 50, offset: int = 0) -> List[Dict[str, Any]]:
+        """会话列表：附带首条用户提问作标题、消息条数（前端侧栏直接渲染）。"""
+        first_message = (
+            select(messages.c.content)
+            .where(
+                messages.c.session_id == sessions.c.session_id,
+                messages.c.role == "user",
+            )
+            .order_by(messages.c.id)
+            .limit(1)
+            .correlate(sessions)
+            .scalar_subquery()
+        )
+        message_count = (
+            select(func.count())
+            .select_from(messages)
+            .where(messages.c.session_id == sessions.c.session_id)
+            .correlate(sessions)
+            .scalar_subquery()
+        )
         with self._engine.connect() as conn:
             rows = conn.execute(
-                select(sessions)
+                select(
+                    sessions.c.session_id,
+                    sessions.c.created_at,
+                    sessions.c.updated_at,
+                    first_message.label("title"),
+                    message_count.label("message_count"),
+                )
                 .where(sessions.c.user_id == user_id)
-                .order_by(sessions.c.updated_at.desc(), sessions.c.session_id)
+                .order_by(sessions.c.updated_at.desc())
                 .limit(limit)
                 .offset(offset)
             ).all()
@@ -229,6 +297,8 @@ class SqliteConversationStore(ConversationStore):
                 "session_id": r.session_id,
                 "created_at": r.created_at,
                 "updated_at": r.updated_at,
+                "title": _title(r.title),
+                "message_count": int(r.message_count or 0),
             }
             for r in rows
         ]

@@ -40,7 +40,11 @@ def make_question_tools(service: QuestionService) -> List[LocalFunction]:
         return _dumps(service.search(query, subject or None, limit))
 
     async def present_quiz(
-        stem: str, options: Optional[List[str]] = None, subject: str = "", source: str = ""
+        stem: str,
+        options: Optional[List[str]] = None,
+        subject: str = "",
+        source: str = "",
+        answer: str = "",
     ) -> str:
         """把一道题以互动题卡的形式展示给用户作答（选择题或问答题均可）。
 
@@ -60,11 +64,14 @@ def make_question_tools(service: QuestionService) -> List[LocalFunction]:
                 留空则出问答题。
             subject: 可选，题目所属学科（自拟时可不填）。
             source: 可选，来源标注：真题填 question_bank，自拟留空（自动记为自拟）。
+            answer: 可选，正确选项字母（如 "D"）。取自真题时**务必传这道题的标准答案**
+                （search_questions 结果里的 answer 字段），用于练习记录自动判题；
+                自拟题可不传。该值只在服务端比对，不会展示给用户。
 
         Returns:
             JSON 字符串：displayed=true 表示题卡已推送。
         """
-        return _dumps(service.present_quiz(stem, options, subject, source))
+        return _dumps(service.present_quiz(stem, options, subject, source, answer))
 
     return [
         tool(search_questions, name="search_questions"),

@@ -9,6 +9,7 @@
 Cypher 只存在于 `graph_repository.py` 的参数化模板里。
 """
 
+import logging
 from typing import Any, Callable, Dict, List, Optional
 
 import functools
@@ -25,6 +26,12 @@ SEARCH_LIMIT_DEFAULT, SEARCH_LIMIT_MAX = 10, 20
 RELATION_LIMIT_DEFAULT, RELATION_LIMIT_MAX = 20, 50
 PATH_MAX_HOPS = 3
 SUBGRAPH_DEPTH_MAX, SUBGRAPH_NODES_MAX = 2, 50
+
+logger = logging.getLogger("graph")
+
+# 降级原因：启动时由 build_graph_repository 写入，/api/meta 与 /api/status 会原样透出，
+# 避免"明明没连上 Neo4j 却在用样例数据"这种无声降级。
+_fallback_reason: str = ""
 
 
 def _clamp(value: int, low: int, high: int, default: int) -> int:
@@ -53,26 +60,48 @@ def _tool_event(name: str):
 
 
 def build_graph_repository(settings: Settings) -> GraphRepository:
-    """按配置挑后端；auto = 先试 Neo4j，失败则降级样例数据。"""
+    """按配置挑后端；auto = 先试 Neo4j，失败则降级样例数据。
+
+    降级不是静默的：原因写进 `_fallback_reason` 并打到日志，
+    再由 `GraphQueryService.stats()` 透给 `/api/meta`、`/api/status` 和前端提示条。
+    """
+    global _fallback_reason
     backend = settings.graph_backend
-    if backend in ("neo4j", "auto") and settings.neo4j_password:
-        try:
-            repo = Neo4jGraphRepository(
-                settings.neo4j_uri,
-                settings.neo4j_user,
-                settings.neo4j_password,
-                settings.neo4j_database,
-            )
-            if repo.ping():
-                return repo
-            repo.close()
-        except Exception:
-            pass
+    reason = ""
+    if backend in ("neo4j", "auto"):
+        if not settings.neo4j_password:
+            reason = "未配置 NEO4J_PASSWORD，无法直连 Neo4j"
+        else:
+            try:
+                repo = Neo4jGraphRepository(
+                    settings.neo4j_uri,
+                    settings.neo4j_user,
+                    settings.neo4j_password,
+                    settings.neo4j_database,
+                )
+                if repo.ping():
+                    _fallback_reason = ""
+                    logger.info("图谱后端：Neo4j 已连接 %s", settings.neo4j_uri)
+                    return repo
+                repo.close()
+                reason = f"Neo4j 无响应（{settings.neo4j_uri}）"
+            except Exception as exc:  # noqa: BLE001 — 任何连接异常都走降级
+                reason = f"Neo4j 连接异常：{type(exc).__name__}"
         if backend == "neo4j":
             raise RuntimeError(
-                f"配置要求 neo4j 后端，但连接失败: {settings.neo4j_uri}"
+                f"配置要求 neo4j 后端，但连接失败: {settings.neo4j_uri}（{reason}）"
             )
+    else:
+        reason = f"GRAPH_BACKEND={backend}，按配置使用样例数据"
+
+    _fallback_reason = reason
+    logger.warning("图谱后端降级为样例数据：%s", reason)
     return SampleGraphRepository(settings.sample_graph)
+
+
+def graph_fallback_reason() -> str:
+    """当前降级原因；正常使用 Neo4j 时为空串。"""
+    return _fallback_reason
 
 
 def _to_brief(row: Dict[str, Any], name_key: str = "name_original") -> EntityBrief:
@@ -123,6 +152,21 @@ class GraphQueryService:
     @property
     def backend(self) -> str:
         return self._repo.backend
+
+    def stats(self) -> Dict[str, Any]:
+        """全图规模 + 后端健康（meta / status 接口用）；不触发工具事件与证据收集。"""
+        try:
+            size = self._repo.stats()
+        except Exception:
+            size = {"nodes": 0, "edges": 0}
+        degraded = self._repo.backend != "neo4j"
+        return {
+            "backend": self._repo.backend,
+            **size,
+            # degraded=true 表示当前回答用的是样例小图，不是全量图谱
+            "degraded": degraded,
+            "reason": _fallback_reason if degraded else "",
+        }
 
     def close(self) -> None:
         if self._owns_repo:
