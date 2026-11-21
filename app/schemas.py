@@ -18,7 +18,11 @@ def _now_iso() -> str:
 # 会话消息
 # --------------------------------------------------------------------------- #
 class Message(BaseModel):
-    """一条归档消息。短期上下文与长期沉淀都基于它。"""
+    """一条归档消息。短期上下文与长期沉淀都基于它。
+
+    `meta` 是给前端还原界面的附加信息（目前用于互动题卡：assistant 消息携带
+    `{"quiz": {...}}`），不参与模型上下文，也不含任何标准答案。
+    """
 
     session_id: str
     user_id: str
@@ -26,6 +30,7 @@ class Message(BaseModel):
     content: str
     request_id: str = ""
     created_at: str = Field(default_factory=_now_iso)
+    meta: Dict[str, Any] = Field(default_factory=dict)
 
 
 # --------------------------------------------------------------------------- #

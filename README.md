@@ -13,7 +13,8 @@ React 前端（`frontend/`，见"启动前端"节）。
 | 对话推理 | openjiuwen `ReActAgent`（provider 固定 `openai`，走 OpenAI 兼容协议） |
 | 图谱检索 | 5 个**白名单工具**（搜索实体 / 实体详情 / 一跳关系 / 最短路径 / 子图），Cypher 由服务层参数化生成，**模型永远不能自由拼查询**；已导入 OpenCMKG 全量（**60,689 中文实体 / 354,752 关系**） |
 | 题库检索 | 2 个题库工具（语义检索真题 / 互动题卡出题）：Chroma `question_bank` 集合 + 本地 TEI bge-m3 嵌入，**39,307 题 / 346 学科**（含答案解析，全局共享无用户隔离） |
-| 互动题卡 | `present_quiz` 工具推送单选题卡（SSE `quiz` 事件），前端渲染作答卡片，提交后作为普通消息由**模型判题并讲解** |
+| 互动题卡 | `present_quiz` 工具推送单选题卡（SSE `quiz` 事件）；**题库真题的答案留在服务端**，前端拿到的题卡只有 `quiz_id` + 题干 + 选项，提交后由 `POST /api/practice/submit` 判题，答案与讲解再由模型在下一轮给出 |
+| 练习中心 | 题卡登记 + 作答记录（SQLite `quiz_card` / `practice_record`），按用户聚合 8 周正确率趋势、学科正确率、薄弱学科、连续练习天数与最近记录（`GET /api/practice/stats`）；**错题重练**把错题复制成新题卡（`POST /api/practice/redo`），练习页可一次作答多题、逐题判分 |
 | 短期上下文 | openjiuwen `ContextEngine`（按 `session_id` 维护最近 N 轮）+ 本地消息归档 |
 | 长期记忆 | openjiuwen 内置 `openjiuwen.core.memory` 引擎 + SQLite + Chroma 向量库，按 `user_id` + `scope_id` 隔离，跨会话召回 |
 | 流式响应 | `handle_chat_stream` 边推理边推事件（`tool_call` / `tool_result` / `quiz` / `delta` / `done`），后端可直接包成 SSE |
@@ -48,7 +49,8 @@ app/
 │   ├── context_service.py      短期上下文 + 会话归属守卫 + 归档
 │   ├── memory_service.py       长期记忆检索/沉淀/降级（Engine 端口）
 │   ├── graph_query_service.py  5 个图谱能力的后端实现
-│   └── question_service.py     题库检索 + 题卡收集（Chroma question_bank）
+│   ├── question_service.py     题库检索 + 题卡收集（Chroma question_bank）
+│   └── practice_service.py     题卡登记 / 作答判题 / 练习统计聚合（SQLite）
 ├── repositories/
 │   ├── conversation_store.py   会话归档（抽象 + SQLite，PG 可替换）
 │   └── graph_repository.py     图数据访问（抽象 + Neo4j + CSV 样例降级）
@@ -63,12 +65,22 @@ server/                          FastAPI 后端路由层（HTTP ⇄ AgentPool �
 ├── user_store.py               用户表（data/server.db）+ PBKDF2 口令哈希
 └── config.py                   服务监听 / CORS / JWT（SERVER_*、JWT_* 环境变量）
 
-frontend/                        React 前端（Vite 构建）
+frontend/                        React 前端（Vite 构建，对应原型十屏）
 ├── src/api.js                  JWT 请求封装 + SSE POST 流式解析（BYOK 只存 localStorage）
-├── src/App.jsx                 登录态管理（令牌失效自动回登录页）
-├── src/Login.jsx               登录/注册
-├── src/ChatPanel.jsx           两栏主界面：会话列表 + 消息流（流式/工具状态/证据标签/互动题卡）
-└── src/SettingsModal.jsx       BYOK 模型设置（浏览器侧保存）
+├── src/App.jsx                 页面路由与登录态（令牌失效自动回登录页）
+├── src/utils.js                实体类型/关系词表、时间与数字格式化
+├── src/components/
+│   ├── Login.jsx               P01 登录 / 注册（品牌区展示图谱与题库规模）
+│   ├── Sidebar.jsx             会话分组列表 + 新建对话 + 练习/设置入口
+│   ├── ChatView.jsx            P02 工作台 / P03 流式检索 / P04 回答（欢迎页 + 输入区）
+│   ├── Message.jsx             消息流：工具步骤、Markdown 回答、题卡、证据标签、统计行
+│   ├── QuizCard.jsx            P05 待作答题卡 / P06 已判题（正确项、你的选择、讲解）
+│   ├── FilesPanel.jsx          P08 附件上传与解析（拖拽区 + 文件状态）
+│   ├── GraphView.jsx           P07 实体详情 + 一跳关系 + 内联子图
+│   ├── PracticeView.jsx        P10 练习中心（KPI / 趋势 / 学科正确率 / 薄弱点）
+│   ├── PracticeRun.jsx         P11 练习页：一次多题（错题重练 / 随机组卷，逐题判分）
+│   ├── SettingsView.jsx        P09 BYOK 模型设置 + 账号 + 长期记忆
+│   └── Icons.jsx               内联 SVG 图标集
 
 examples/                       01_chat / 02_memory
 scripts/import_sample.py        导入小样例图谱到 Neo4j
@@ -123,9 +135,14 @@ data/question_bank/             医学题库 JSON（7,902 文件 / 346 学科）
   有效期 `JWT_EXPIRE_MINUTES`（默认 720 分钟）。
 - **接口**：`POST /api/auth/register`、`POST /api/auth/login`、`GET /api/auth/me`、
   `POST /api/chat`、`POST /api/chat/stream`（SSE，事件 `tool_call` / `tool_result` /
-  `quiz` / `delta` / `done` / `error`，静默期每 20s 发 `: ping` 注释行）、`GET /api/entities/{key}`、
+  `quiz` / `delta` / `done` / `error`，静默期每 20s 发 `: ping` 注释行）、`GET /api/meta`、
+  `GET /api/status`（依赖服务实时健康）、`POST /api/status/graph/reconnect`（图谱热重连）、
+  `GET /api/entities/{key}`、`GET /api/entities/{key}/relations`、
   `GET /api/entities/{key}/subgraph?depth=1&limit=50`、`DELETE /api/users/me/memory`、
   `GET /api/sessions`、`GET /api/sessions/{id}/messages`、`DELETE /api/sessions/{id}`、
+  `POST /api/practice/submit`、`GET /api/practice/stats?days=30`、
+  `GET /api/practice/records?limit=20`、`POST /api/practice/redo`（错题重练·一次多题）、
+  `POST /api/practice/drill`（随机组卷）、`GET/POST /api/files`、`DELETE /api/files/{id}`、
   `GET /api/health`。完整契约（错误码 / SSE 字段 / 联调检查单）见 [接口文档.md](接口文档.md)。
 - 服务端环境变量（`SERVER_HOST` / `SERVER_PORT` / `JWT_SECRET` / `CORS_ORIGINS` 等）也写在 `.env` 里，
   模板见 [.env.example](.env.example)。
@@ -141,10 +158,23 @@ npm run dev        # http://localhost:5173（/api 已代理到本地后端）
 npm run build      # 生产构建到 frontend/dist（由同源反代或静态服务承载）
 ```
 
-- 页面功能：注册/登录（JWT 存 localStorage）、会话列表（新建/切换/删除）、SSE 流式问答
-  （工具调用状态行 + 逐字生成）、证据实体标签展示、互动题卡作答（单选提交后由模型判题讲解）、
-  BYOK 模型设置（仅存浏览器）、清空长期记忆、退出登录。
-- 已实测：注册登录 → 流式问答（约 30s）→ 证据标签展示 → 退出重登会话仍在，控制台无报错。
+- 页面（对应原型 `prototype/` 十屏，外加一屏练习页）：P01 登录/注册 · P02 工作台 · P03 流式检索过程 ·
+  P04 带证据的回答 · P05 题卡作答 · P06 判题与讲解 · P07 图谱实体详情 + 子图 ·
+  P08 附件上传解析 · P09 BYOK 设置 · P10 练习中心 · P11 练习页（一次多题）。
+- 练习中心的三条入口，都不再"发一句话让 AI 重新出一道"：
+  - **重练错题**：`POST /api/practice/redo` 把答错过的题**复制成一组新题卡**（新 `quiz_id`，
+    答案仍留在服务端），一次最多 10 题，同屏作答、逐题判分，全部答完给出本组正确率；
+  - **随机 5 题**：`POST /api/practice/drill` 直接从 Chroma 按随机 offset 抽题，不走向量检索；
+  - **让 AI 出新题**：仍走对话（`present_quiz`），适合按知识点讲一道新题。
+  - 薄弱学科行的「重练」按学科取错题，最近记录行的「重练」只重练那一道。
+- 深链：`/?view=practice` 练习中心、`/?view=settings` 设置、
+  `/?view=graph&entity=<entity_key>` 实体详情、`/?view=files` 附件模式。
+- 关键交互：会话列表（首条提问作标题 + 消息条数，切会话回放时题卡锁态与证据标签一并还原）、
+  SSE 流式问答（工具步骤 + 逐字生成）、证据标签点击跳图谱、题卡提交后调
+  `POST /api/practice/submit` 服务端判题并把「我选 X」作为下一轮提问、BYOK 仅存浏览器、
+  清空长期记忆、退出登录。
+- 已实测（无头 Edge 逐屏巡检 + 历史回放）：十屏渲染无 React 报错/无控制台 error，
+  证据标签、题卡三态（未作答 / 答错 / 答对）、练习中心统计与趋势图均正常。
 
 ## 安装
 
@@ -268,6 +298,31 @@ docker run -d --name oj-neo4j -p 7474:7474 -p 7687:7687 `
   `GraphQueryService` 与 5 个图谱工具**无需改任何代码**即可用于全量数据
 - 实测全量导入约 167 秒（含清库）
 
+### 起没起来，一眼能看出来
+
+后端**不会**因为 Neo4j 不在就崩，而是自动降级到 `data/sample_graph.csv` 的 59 实体小样例，
+所以"能跑"和"跑在全量图上"必须是两件可区分的事。三处反馈：
+
+| 位置 | 正常 | 降级 |
+| --- | --- | --- |
+| 对话页顶部 | `图谱在线 · 60,689 实体` | 橙色提示条 + `图谱降级 · 样例 59 实体` |
+| 设置 → 服务状态 | `Neo4j · 60,689 实体 / 354,752 关系` | `样例数据 · 59 实体`、原因文案、`重连图谱` 按钮 |
+| `GET /api/meta` | `graph.degraded=false` | `graph.degraded=true` + `graph.reason` |
+
+降级原因只有三种，`graph.reason` 会原样告诉你：
+
+1. `未配置 NEO4J_PASSWORD，无法直连 Neo4j` —— **最常见**。`.env` 里 `NEO4J_PASSWORD` 留空时，
+   `auto` 模式会直接跳过 Neo4j（不会报错），必须与容器 `NEO4J_AUTH=neo4j/<密码>` 的密码一致。
+2. `Neo4j 无响应（bolt://localhost:7687）` —— 容器没起、还在冷启动（约 10~25 秒）、或端口被占。
+3. `GRAPH_BACKEND=sample` —— 配置里显式指定了样例后端。
+
+**启动顺序**：先 `docker start oj-neo4j`，再起后端。若反过来也没关系——Neo4j 起来后到
+「设置 → 服务状态」点 `重连图谱`（`POST /api/status/graph/reconnect`）即可热切换，
+不必重启进程；该操作会清空 BYOK 装配缓存，会话与记忆都在持久层，不会丢。
+
+> 冷启动期间 `/api/status` 与 `/api/meta` 都是实时/短缓存结果，Neo4j 刚好还在启动时会先看到降级，
+> 等 20 秒点一次「重新检测」就能看到恢复。
+
 ### 题库嵌入（Chroma question_bank，39,307 题）
 
 数据源：`lengfeng650-star/medical-exam-question-bank-json`（Apache 2.0，医学考试题库），
@@ -388,5 +443,6 @@ await close(built)                               # 进程退出前必须调用�
   图谱**没有副作用 / 禁忌 / 药物相互作用**类数据，不要声称"未检索到"
 - `disease_recommand_drug` / `disease_common_drug` 等"推荐/常用"关系只是图谱记录的信息，
   **不等于临床处方**，回答需提示遵医嘱，不得替用户开药
-- 题库答案/解析存于 Chroma metadata，`present_quiz` 推送给前端的题卡**不含答案**，
-  判题由模型在下一轮完成
+- 题库答案/解析存于 Chroma metadata，`present_quiz` 推送给前端的题卡**不含答案**：
+  题库真题的答案在服务端随题卡登记，判题走 `POST /api/practice/submit`（只回 `correct` / `answer` / `chosen`）；
+  模型自拟题无标准答案，`correct` 记为 `-1`（未判定），不计入正确率

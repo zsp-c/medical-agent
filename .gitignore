@@ -9,3 +9,10 @@ logs/
 # 运行期产物（SQLite / Chroma）不纳入版本控制，样例图谱数据要保留
 data/*
 !data/sample_graph.csv
+# 用户账号库等运行期数据
+server/data/
+
+# 本地工具产物
+.idea/
+.trae/
+.workbuddy/

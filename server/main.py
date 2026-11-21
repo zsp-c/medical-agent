@@ -11,16 +11,25 @@
 - POST   /api/auth/login                      登录，返回 JWT
 - GET    /api/auth/me                         当前用户信息
 - POST   /api/chat                            非流式问答
-- POST   /api/chat/stream                     SSE 流式（tool_call/tool_result/delta/done）
-- POST   /api/files                           上传并解析文件（multipart，返回解析状态）
-- GET    /api/files                           当前用户文件列表
+- POST   /api/chat/stream                     SSE 流式（tool_call/tool_result/quiz/delta/done）
+- POST   /api/files                           上传并解析文件（multipart，可带 session_id）
+- GET    /api/files                           文件列表（可按 session_id 过滤）
 - DELETE /api/files/{file_id}                 删除文件（磁盘与数据行一起清）
+- POST   /api/practice/submit                 提交题卡作答（服务端判对错）
+- GET    /api/practice/stats                  练习中心统计（KPI/趋势/学科/薄弱点）
+- GET    /api/practice/records                最近作答记录
+- POST   /api/practice/redo                   错题重练：复制成一组新题卡（一次多题）
+- POST   /api/practice/drill                  随机组卷：题库抽题，不走向量检索
 - GET    /api/entities/{entity_key}           实体详情
+- GET    /api/entities/{entity_key}/relations 一跳关系 + 关系类型分布
 - GET    /api/entities/{entity_key}/subgraph  局部子图
 - DELETE /api/users/me/memory                 清空当前用户长期记忆
-- GET    /api/sessions                        会话列表
-- GET    /api/sessions/{session_id}/messages  会话历史消息
+- GET    /api/sessions                        会话列表（含标题与消息条数）
+- GET    /api/sessions/{session_id}/messages  会话历史消息（题卡带回作答状态）
 - DELETE /api/sessions/{session_id}           删除会话
+- GET    /api/meta                            规模信息（免鉴权，登录页用）
+- GET    /api/status                          依赖服务实时健康（图谱 / 向量 / 题库 / 模型）
+- POST   /api/status/graph/reconnect           重建图谱连接（Neo4j 晚启动时免重启）
 - GET    /api/health                          存活探针（免鉴权）
 
 鉴权：Authorization: Bearer <JWT>（注册/登录签发，sub=user_id，过期时间见
@@ -30,6 +39,7 @@ JWT_EXPIRE_MINUTES；签名密钥 JWT_SECRET 必须在 .env 显式配置，否�
 import asyncio
 import json
 import logging
+import time
 import uuid
 from pathlib import Path
 from contextlib import asynccontextmanager, suppress
@@ -55,6 +65,7 @@ from app.factory import AgentPool
 from app.schemas import ChatRequest, ChatResponse, GraphResult, LLMConfig
 from app.services import SessionOwnershipError
 from app.services.file_service import UploadRejectedError
+from app.services.question_service import count_questions, embedding_ready
 from app.settings import Settings
 from server.auth import create_access_token, current_user
 from server.config import ServerConfig
@@ -246,12 +257,14 @@ async def upload_files(
     request: Request,
     files: List[UploadFile] = File(...),
     llm: Optional[str] = Form(default=None),
+    session_id: Optional[str] = Form(default=None),
 ) -> Dict[str, Any]:
     """上传并解析文件（每个文件独立返回解析状态，失败的文件不影响其他文件）。
 
     - 单次最多 upload_max_files 个、每个 ≤ upload_max_mb（超出 400，文案可读）
     - `llm` 为可选表单字段（JSON 字符串）：图片 caption 用的视觉模型配置，
       仅本次请求内存使用，不持久化；缺省用服务端默认模型
+    - `session_id` 为可选表单字段：附件所属会话，附件页按会话筛选时用
     """
     settings: Settings = request.app.state.settings
     if len(files) > settings.upload_max_files:
@@ -271,7 +284,13 @@ async def upload_files(
         data = await upload.read()
         try:
             results.append(
-                await service.ingest(user, upload.filename or "file", data, llm_cfg)
+                await service.ingest(
+                    user,
+                    upload.filename or "file",
+                    data,
+                    llm_cfg,
+                    session_id or "",
+                )
             )
         except UploadRejectedError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -282,9 +301,13 @@ async def upload_files(
 
 
 @router.get("/files")
-def list_files(user: CurrentUser, request: Request) -> Dict[str, Any]:
-    """当前用户的文件列表（新→旧，不含正文）。"""
-    return {"files": _pool(request).file_service().list_files(user)}
+def list_files(
+    user: CurrentUser,
+    request: Request,
+    session_id: Optional[str] = Query(default=None),
+) -> Dict[str, Any]:
+    """当前用户的文件列表（新→旧，不含正文）；带 session_id 时只看该会话的附件。"""
+    return {"files": _pool(request).file_service().list_files(user, session_id)}
 
 
 @router.delete("/files/{file_id}")
@@ -298,12 +321,141 @@ def delete_file(file_id: str, user: CurrentUser, request: Request) -> Dict[str, 
     return {"ok": True}
 
 
+# --------------------------------------------------------------------------- #
+# 练习中心：题卡作答提交 + 答题统计（数据来自 app/services/practice_service.py）
+# --------------------------------------------------------------------------- #
+class PracticeSubmitBody(BaseModel):
+    """作答提交：quiz_id 来自 quiz 事件，chosen 是选项字母或自由作答文本。"""
+
+    quiz_id: str = Field(min_length=1, max_length=36)
+    chosen: str = Field(default="", max_length=200)
+
+
+@router.post("/practice/submit")
+def submit_practice(
+    body: PracticeSubmitBody, user: CurrentUser, request: Request
+) -> Dict[str, Any]:
+    """提交一道题的作答，返回判题结果（标准答案在服务端比对，题卡未提交时不下发）。
+
+    幂等：同一 quiz_id 重复提交只记一次，重复请求回放首次结果。
+    """
+    result = _pool(request).practice_service().submit(user, body.quiz_id, body.chosen)
+    if result is None:
+        raise HTTPException(status_code=404, detail="题卡不存在或已失效")
+    return result
+
+
+@router.get("/practice/stats")
+def practice_stats(
+    user: CurrentUser,
+    request: Request,
+    days: int = Query(default=30, ge=1, le=365),
+) -> Dict[str, Any]:
+    """练习中心统计：KPI、8 周趋势、学科正确率、薄弱点、最近记录。"""
+    return _pool(request).practice_service().stats(user, days)
+
+
+@router.get("/practice/records")
+def practice_records(
+    user: CurrentUser,
+    request: Request,
+    limit: int = Query(default=20, ge=1, le=200),
+) -> Dict[str, Any]:
+    """最近作答记录（新→旧）。"""
+    return {"records": _pool(request).practice_service().records(user, limit)}
+
+
+class PracticeRedoBody(BaseModel):
+    """重练：不传 quiz_ids 就按错题取（可按学科过滤），一次最多 20 题。"""
+
+    quiz_ids: Optional[List[str]] = Field(default=None, max_length=20)
+    subject: Optional[str] = Field(default=None, max_length=64)
+    limit: int = Field(default=10, ge=1, le=20)
+
+
+@router.post("/practice/redo")
+def redo_practice(
+    body: PracticeRedoBody, user: CurrentUser, request: Request
+) -> Dict[str, Any]:
+    """把错题（或指定题卡）复制成一组新题卡，供练习页一次作答多题。
+
+    返回的题卡与 `quiz` 事件同构（不含答案），作答仍走 `POST /api/practice/submit`。
+    没有错题时返回空列表 + `empty=true`，前端据此引导去随机组卷或让 AI 出题。
+    """
+    service = _pool(request).practice_service()
+    quizzes = service.create_redo(
+        user, quiz_ids=body.quiz_ids, subject=body.subject, limit=body.limit
+    )
+    return {
+        "quizzes": quizzes,
+        "count": len(quizzes),
+        "empty": not quizzes,
+        "available": service.wrong_count(user, body.subject),
+    }
+
+
+class PracticeDrillBody(BaseModel):
+    """随机组卷：从题库按 offset 随机抽选择题，不走向量检索。"""
+
+    count: int = Field(default=5, ge=1, le=10)
+    subject: Optional[str] = Field(default=None, max_length=64)
+
+
+@router.post("/practice/drill")
+def practice_drill(
+    body: PracticeDrillBody, user: CurrentUser, request: Request
+) -> Dict[str, Any]:
+    """随机抽一组题并登记成题卡（不依赖 embedding，向量服务挂了也能练）。"""
+    pool = _pool(request)
+    questions = pool.question_service().sample_questions(body.count, body.subject)
+    quizzes = []
+    for q in questions:
+        quizzes.append(
+            pool.practice_service().register_quiz(
+                user,
+                "",
+                {
+                    "kind": "choice",
+                    "stem": q.get("stem", ""),
+                    "options": q.get("options") or [],
+                    "subject": q.get("subject", ""),
+                    "source": "question_bank",
+                    "answer": q.get("answer", ""),
+                },
+            )
+        )
+    return {
+        "quizzes": quizzes,
+        "count": len(quizzes),
+        "empty": not quizzes,
+        "degraded": not questions,
+    }
+
+
 @router.get("/entities/{entity_key}")
 def entity_details(entity_key: str, user: CurrentUser, request: Request) -> Dict[str, Any]:
     """实体详情。found=false 表示键不存在（200 直通，保持 schema 一致）。"""
     graph = _pool(request).graph_service()
     graph.begin_round()  # 清空证据收集器，避免 HTTP 查询逐次累积
     return graph.get_entity_details(entity_key)
+
+
+@router.get("/entities/{entity_key}/relations", response_model=GraphResult)
+def entity_relations(
+    entity_key: str,
+    user: CurrentUser,
+    request: Request,
+    relation_code: Optional[str] = Query(default=None),
+    direction: str = Query(default="both", pattern="^(out|in|both)$"),
+    limit: int = Query(default=50, ge=1, le=100),
+) -> GraphResult:
+    """实体的一跳关系（图谱详情页左侧「关系」页签 + 关系类型分布）。
+
+    `meta.relation_counts` 是全量分布，不受 `limit` 截断影响。
+    """
+    graph = _pool(request).graph_service()
+    graph.begin_round()
+    return graph.query_relations(entity_key, relation_code, direction, limit)
 
 
 @router.get("/entities/{entity_key}/subgraph", response_model=GraphResult)
@@ -364,11 +516,29 @@ def session_messages(
     request: Request,
     limit: int = Query(default=200, ge=1, le=1000),
 ) -> Dict[str, Any]:
-    """会话历史消息（时间正序，取最近 limit 条）。"""
+    """会话历史消息（时间正序，取最近 limit 条）。
+
+    题卡随消息归档在 `meta.quiz` 里；这里按 quiz_id 回填作答状态
+    （chosen / correct / answer），刷新页面后仍能看到判题结果与锁定态。
+    """
     store = _pool(request).conversation_store()
     _owned_session(store, session_id, user)
     messages = store.load_recent(session_id, limit)
-    return {"session_id": session_id, "messages": [m.model_dump() for m in messages]}
+    items = [m.model_dump() for m in messages]
+    practice = _pool(request).practice_service()
+    quiz_ids = [
+        m["meta"]["quiz"]["quiz_id"]
+        for m in items
+        if isinstance(m.get("meta"), dict)
+        and isinstance(m["meta"].get("quiz"), dict)
+        and m["meta"]["quiz"].get("quiz_id")
+    ]
+    status = practice.lookup_answers(user, quiz_ids)
+    for item in items:
+        quiz = item["meta"].get("quiz") if isinstance(item.get("meta"), dict) else None
+        if isinstance(quiz, dict) and quiz.get("quiz_id") in status:
+            quiz.update(status[quiz["quiz_id"]])
+    return {"session_id": session_id, "messages": items}
 
 
 @router.delete("/sessions/{session_id}")
@@ -383,6 +553,70 @@ def delete_session(session_id: str, user: CurrentUser, request: Request) -> Dict
 def health() -> Dict[str, str]:
     """存活探针（免鉴权）。"""
     return {"status": "ok"}
+
+
+_meta_cache: Dict[str, Any] = {"at": 0.0, "payload": None}
+_META_TTL_SECONDS = 60.0
+
+
+@router.get("/meta")
+def public_meta(request: Request) -> Dict[str, Any]:
+    """登录页与侧栏用的规模信息（免鉴权，60s 缓存，不暴露任何用户数据）。"""
+    now = time.time()
+    if _meta_cache["payload"] and now - _meta_cache["at"] < _META_TTL_SECONDS:
+        return _meta_cache["payload"]
+    settings: Settings = request.app.state.settings
+    payload = {
+        "graph": _pool(request).graph_service().stats(),
+        "graph_configured": settings.graph_backend,
+        "questions": count_questions(settings),
+        # 题库检索 / 长期记忆都依赖 embedding 端点；false 表示向量服务未连接（检索会降级为空）
+        "embedding_ready": embedding_ready(settings),
+        "model": settings.model,
+        "upload_max_files": settings.upload_max_files,
+        "upload_max_mb": settings.upload_max_mb,
+        "upload_char_limit": settings.upload_char_limit,
+        "allow_registration": request.app.state.server_config.allow_registration,
+    }
+    _meta_cache.update(at=now, payload=payload)
+    return payload
+
+
+@router.get("/status")
+def service_status(user: CurrentUser, request: Request) -> Dict[str, Any]:
+    """服务依赖的实时健康状态（登录后可用，不走缓存）。
+
+    前端"设置 → 服务状态"与降级提示条都读这里；与 `/api/meta` 的区别是
+    每次调用都会真正探测 Neo4j 与 embedding 端点，能看到"刚启动完就恢复"。
+    """
+    settings: Settings = request.app.state.settings
+    return {
+        "graph": {
+            **_pool(request).graph_service().stats(),
+            "configured": settings.graph_backend,
+            "uri": settings.neo4j_uri,
+            "database": settings.neo4j_database,
+        },
+        "embedding": {
+            "ready": embedding_ready(settings),
+            "model": settings.embedding_model,
+            "endpoint": settings.embedding_base_url,
+        },
+        "questions": count_questions(settings),
+        "llm": {"model": settings.model, "server_key": bool(settings.api_key)},
+    }
+
+
+@router.post("/status/graph/reconnect")
+async def reconnect_graph(user: CurrentUser, request: Request) -> Dict[str, Any]:
+    """重建图谱连接，让 Neo4j 晚启动的场景不必重启后端。
+
+    重建会清空 BYOK 装配缓存（下一次提问按原配置重建，会话/记忆不丢），
+    并让 `/api/meta` 缓存失效，前端下一次读到的就是新后端。
+    """
+    stats = await _pool(request).refresh_graph()
+    _meta_cache.update(at=0.0, payload=None)
+    return stats
 
 
 # --------------------------------------------------------------------------- #
