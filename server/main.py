@@ -31,6 +31,7 @@ import asyncio
 import json
 import logging
 import uuid
+from pathlib import Path
 from contextlib import asynccontextmanager, suppress
 from typing import Annotated, Any, AsyncIterator, Dict, List, Optional
 
@@ -47,6 +48,7 @@ from fastapi import (
 )
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from app.factory import AgentPool
@@ -422,6 +424,12 @@ def create_app(
         allow_headers=["*"],
     )
     app.include_router(router)
+    # 前端构建产物存在时同源托管（页面与 /api 同源，免反代/额外静态服务）；
+    # 挂载在路由之后，/api 优先匹配
+    dist_dir = Path(__file__).resolve().parent.parent / "frontend" / "dist"
+    if dist_dir.is_dir():
+        app.mount("/", StaticFiles(directory=dist_dir, html=True), name="frontend")
+        logger.info("已托管前端构建产物：%s", dist_dir)
     return app
 
 
