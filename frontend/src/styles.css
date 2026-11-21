@@ -426,6 +426,12 @@ textarea:focus {
   font-size: 13px;
 }
 
+.msg-stopped {
+  margin-top: 8px;
+  color: var(--muted);
+  font-size: 12.5px;
+}
+
 /* ---------- 互动题卡 ---------- */
 .quiz-card {
   margin-top: 10px;
@@ -583,6 +589,17 @@ textarea:focus {
 .composer .icon-attach:disabled {
   opacity: 0.5;
   cursor: default;
+}
+
+/* 生成中替换“发送”的停止按钮：描边样式，避免和主操作抢视觉 */
+.composer .stop {
+  color: var(--danger);
+  border-color: var(--danger);
+}
+
+.composer .stop:hover {
+  border-color: var(--danger);
+  background: #fff1f0;
 }
 
 /* ---------- 附件 chip ---------- */

@@ -113,6 +113,7 @@ function Message({ m, quizDisabled, onQuizSubmit }) {
           m.content
         )}
         {m.error && <div className="msg-error">出错了：{m.error}</div>}
+        {m.stopped && <div className="msg-stopped">已停止生成</div>}
         {m.quiz && <QuizCard quiz={m.quiz} disabled={quizDisabled} onSubmit={onQuizSubmit} />}
       </div>
     </div>
@@ -130,6 +131,7 @@ export default function ChatPanel({ token, username, llm, onLogout, onOpenSettin
   const [files, setFiles] = useState([]);
   const fileInputRef = useRef(null);
   const bottomRef = useRef(null);
+  const abortRef = useRef(null);
   const MAX_FILES = 3;
 
   const handle401 = useCallback(
@@ -162,6 +164,13 @@ export default function ChatPanel({ token, username, llm, onLogout, onOpenSettin
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages]);
+
+  // 生成期间可中断：断开 SSE，服务端对应的流也会随之取消；组件卸载同样收尾
+  function stop() {
+    abortRef.current?.abort();
+  }
+
+  useEffect(() => () => abortRef.current?.abort(), []);
 
   async function openSession(sid) {
     if (busy || sid === active) return;
@@ -281,6 +290,8 @@ export default function ChatPanel({ token, username, llm, onLogout, onOpenSettin
     setBusy(true);
     setNotice('');
     const requestId = crypto.randomUUID();
+    const controller = new AbortController();
+    abortRef.current = controller;
     setMessages((ms) => [
       ...ms,
       { role: 'user', content: query, files: fileNames },
@@ -294,6 +305,7 @@ export default function ChatPanel({ token, username, llm, onLogout, onOpenSettin
         requestId,
         llm,
         attachments,
+        signal: controller.signal,
         onEvent: ({ event, data }) => {
           if (event === 'delta') {
             patchLast((m) => {
@@ -327,14 +339,23 @@ export default function ChatPanel({ token, username, llm, onLogout, onOpenSettin
         },
       });
     } catch (e) {
-      patchLast((m) => {
-        if (m.streaming) {
-          m.error = e.message;
+      if (controller.signal.aborted) {
+        // 用户主动停止：保留已生成的内容，只收尾，不当作错误
+        patchLast((m) => {
           m.streaming = false;
-        }
-      });
-      handle401(e);
+          m.stopped = true;
+        });
+      } else {
+        patchLast((m) => {
+          if (m.streaming) {
+            m.error = e.message;
+            m.streaming = false;
+          }
+        });
+        handle401(e);
+      }
     } finally {
+      abortRef.current = null;
       setBusy(false);
       refreshSessions();
     }
@@ -446,9 +467,15 @@ export default function ChatPanel({ token, username, llm, onLogout, onOpenSettin
             placeholder="输入医疗问题，Enter 发送，Shift+Enter 换行"
             rows={2}
           />
-          <button className="primary" disabled={busy || !input.trim()} onClick={() => send()}>
-            {busy ? '生成中…' : '发送'}
-          </button>
+          {busy ? (
+            <button className="stop" onClick={stop}>
+              停止
+            </button>
+          ) : (
+            <button className="primary" disabled={!input.trim()} onClick={() => send()}>
+              发送
+            </button>
+          )}
         </div>
       </main>
     </div>
