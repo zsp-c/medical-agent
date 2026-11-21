@@ -8,15 +8,30 @@ export default function Login({ onLogin }) {
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
 
+  // 与后端 AuthBody 的校验规则保持一致；原生 pattern/minLength 之外再拦一层，
+  // 避免不同浏览器（或自动化填值）绕过原生校验后直接打出 422
+  function validate(u, p) {
+    if (!/^[A-Za-z0-9_-]{3,32}$/.test(u)) return '用户名需为 3~32 位字母、数字、下划线或短横线';
+    if (p.length < 8) return '密码至少 8 位';
+    if (p.length > 128) return '密码最多 128 位';
+    return '';
+  }
+
   async function submit(e) {
     e.preventDefault();
+    const u = username.trim();
+    const invalid = validate(u, password);
+    if (invalid) {
+      setError(invalid);
+      return;
+    }
     setError('');
     setBusy(true);
     try {
       const r =
         mode === 'login'
-          ? await api.login(username.trim(), password)
-          : await api.register(username.trim(), password);
+          ? await api.login(u, password)
+          : await api.register(u, password);
       saveToken(r.access_token);
       onLogin(r.access_token, r.username);
     } catch (err) {
@@ -43,6 +58,8 @@ export default function Login({ onLogin }) {
             onChange={(e) => setUsername(e.target.value)}
             placeholder="3~32 位字母、数字、_、-"
             autoComplete="username"
+            pattern="[A-Za-z0-9_-]{3,32}"
+            title="3~32 位字母、数字、下划线或短横线"
             required
           />
         </label>
@@ -54,6 +71,8 @@ export default function Login({ onLogin }) {
             onChange={(e) => setPassword(e.target.value)}
             placeholder={mode === 'register' ? '至少 8 位' : ''}
             autoComplete={mode === 'login' ? 'current-password' : 'new-password'}
+            minLength={8}
+            maxLength={128}
             required
           />
         </label>

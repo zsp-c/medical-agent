@@ -33,11 +33,23 @@ export class ApiError extends Error {
   }
 }
 
+// pydantic 422 的 detail 是 [{loc, msg, type}] 数组，取第一条 msg 即可；
+// 直接 JSON.stringify 会让登录框显示一整串原始对象
+function describeDetail(detail) {
+  if (typeof detail === 'string') return detail;
+  if (Array.isArray(detail) && detail.length) {
+    const first = detail[0];
+    if (first && typeof first.msg === 'string') return first.msg;
+  }
+  return detail ? JSON.stringify(detail) : '';
+}
+
 async function parseError(res) {
   let detail = `HTTP ${res.status}`;
   try {
     const d = await res.json();
-    if (d && d.detail) detail = typeof d.detail === 'string' ? d.detail : JSON.stringify(d.detail);
+    const described = d && describeDetail(d.detail);
+    if (described) detail = described;
   } catch {
     /* 保留默认 */
   }

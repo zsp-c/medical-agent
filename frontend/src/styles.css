@@ -88,6 +88,20 @@ textarea:focus {
   color: var(--muted);
 }
 
+.boot-panel {
+  display: grid;
+  gap: 12px;
+  justify-items: center;
+  max-width: 320px;
+  text-align: center;
+}
+
+.boot-panel p {
+  margin: 0;
+  color: var(--danger);
+  font-size: 13px;
+}
+
 /* ---------- 登录 ---------- */
 .login-wrap {
   height: 100%;

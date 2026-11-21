@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import ChatPanel from './ChatPanel';
 import Login from './Login';
 import SettingsModal from './SettingsModal';
@@ -9,18 +9,29 @@ export default function App() {
   const [username, setUsername] = useState('');
   const [llm, setLlm] = useState(getLlm());
   const [showSettings, setShowSettings] = useState(false);
+  const [bootError, setBootError] = useState('');
 
-  // 刷新/重开页面时用已存令牌换回用户信息；令牌失效则回登录页
-  useEffect(() => {
+  // 刷新/重开页面时用已存令牌换回用户信息。
+  // 只有 401 才说明令牌真的失效；断网、后端重启等错误保留令牌，让用户重试
+  const verifyToken = useCallback(() => {
     if (!token) return;
+    setBootError('');
     api
       .me(token)
       .then((u) => setUsername(u.username))
-      .catch(() => {
-        clearToken();
-        setToken('');
+      .catch((e) => {
+        if (e?.status === 401) {
+          clearToken();
+          setToken('');
+        } else {
+          setBootError(e.message || '无法连接服务器');
+        }
       });
   }, [token]);
+
+  useEffect(() => {
+    verifyToken();
+  }, [verifyToken]);
 
   function signOut() {
     clearToken();
@@ -38,7 +49,21 @@ export default function App() {
       />
     );
   }
-  if (!username) return <div className="boot">加载中…</div>;
+  if (!username) {
+    if (bootError) {
+      return (
+        <div className="boot">
+          <div className="boot-panel">
+            <p>{bootError}</p>
+            <button className="primary" onClick={verifyToken}>
+              重试
+            </button>
+          </div>
+        </div>
+      );
+    }
+    return <div className="boot">加载中…</div>;
+  }
 
   return (
     <>
