@@ -30,6 +30,14 @@ dependencies = [
     "python-pptx>=1.0",
 ]
 
+# 测试依赖：只在跑 `pytest tests/` 时需要，运行期不装。
+# 用法：pip install -e ".[dev]" && pytest tests/
+[project.optional-dependencies]
+dev = [
+    "pytest>=8",
+    "httpx>=0.27",
+]
+
 [build-system]
 requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
